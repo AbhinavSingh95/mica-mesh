@@ -8,8 +8,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -61,17 +65,23 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/crash", func(w http.ResponseWriter, req *http.Request) { os.Exit(7) })
-	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		body, _ := io.ReadAll(io.LimitReader(req.Body, 65537))
-		response, err := client.Post(control+req.URL.Path, "application/json", bytes.NewReader(body))
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		defer response.Body.Close()
-		w.WriteHeader(response.StatusCode)
-		io.Copy(w, response.Body)
-	})
+	target, _ := url.Parse(control)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.FlushInterval = -1
+	mux.Handle("/", proxy)
+	if os.Getenv("MICA_TEST_IGNORE_TERM") == "1" {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGTERM)
+		go func() {
+			for range signals {
+				resp, err := client.Post(control+"/termination", "application/json", nil)
+				if err == nil {
+					resp.Body.Close()
+				}
+			}
+		}()
+	}
+
 	if err := http.Serve(listener, mux); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

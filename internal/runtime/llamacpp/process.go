@@ -21,6 +21,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	mesh "github.com/AbhinavSingh95/mica-mesh/internal/runtime"
 )
@@ -36,7 +37,7 @@ const (
 
 // Runtime owns one child and a reusable loopback client. Callers serialize Start/Stop;
 // Health and Capabilities may run concurrently with either operation.
-// Task 5 adds generation to this lifecycle implementation.
+// Generate owns local activity until streaming and cleanup finish.
 type Runtime struct {
 	mu           sync.Mutex
 	health       mesh.Health
@@ -44,6 +45,9 @@ type Runtime struct {
 	child        *childProcess
 	baseURL      string
 	client       *http.Client
+	generating   bool // Guard includes preflight and cleanup; Health cannot release it.
+	// Private bounded-cleanup deadline seam permits coordinated tests without five-second sleeps.
+	cleanupTimeout func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 }
 type childProcess struct {
 	cmd  *exec.Cmd
@@ -61,6 +65,10 @@ func New() *Runtime {
 // to this request's context; the caller must eventually Stop it.
 func (r *Runtime) Start(ctx context.Context, cfg mesh.Config) (err error) {
 	r.mu.Lock()
+	if r.generating {
+		r.mu.Unlock()
+		return fmt.Errorf("start: %w: generation still owns runtime", mesh.ErrUnavailable)
+	}
 	if r.child != nil {
 		select {
 		case <-r.child.done:
@@ -132,7 +140,7 @@ func (r *Runtime) Start(ctx context.Context, cfg mesh.Config) (err error) {
 		child.err = cmd.Wait()
 		r.mu.Lock()
 		if r.child == child {
-			r.health.Active = false
+			r.health.Active = r.generating
 			r.health.State = mesh.StateUnhealthy
 			r.health.LastError = fmt.Sprintf("runtime exited: %v; stderr: %s", child.err, log.String())
 		}
@@ -381,7 +389,7 @@ func (r *Runtime) Health(ctx context.Context) (mesh.Health, error) {
 			r.health.State = mesh.StateUnhealthy
 			r.health.LastError = err.Error()
 		} else {
-			r.health.Active = *slots[0].Processing
+			r.health.Active = r.generating || *slots[0].Processing
 		}
 	}
 	return r.health, err
@@ -399,24 +407,11 @@ func (r *Runtime) controlJSON(ctx context.Context, path string, target any) erro
 	return r.requestJSON(ctx, http.MethodGet, path, nil, target)
 }
 func (r *Runtime) requestJSON(ctx context.Context, method, path string, body []byte, target any) error {
-	r.mu.Lock()
-	baseURL := r.baseURL
-	r.mu.Unlock()
-	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, bytes.NewReader(body))
+	response, err := r.requestHTTP(ctx, method, path, body)
 	if err != nil {
 		return err
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	response, err := r.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("runtime %s: %w", path, err)
-	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("runtime %s HTTP %d: %w", path, response.StatusCode, mesh.ErrUnavailable)
-	}
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("read runtime %s: %w", path, err)
@@ -424,10 +419,40 @@ func (r *Runtime) requestJSON(ctx context.Context, method, path string, body []b
 	if len(payload) > maxResponseBytes {
 		return fmt.Errorf("runtime %s response exceeds 64 KiB: %w", path, mesh.ErrMalformedResponse)
 	}
+	if !utf8.Valid(payload) {
+		return fmt.Errorf("invalid runtime %s UTF-8: %w", path, mesh.ErrMalformedResponse)
+	}
 	if err = json.Unmarshal(payload, target); err != nil {
 		return fmt.Errorf("decode runtime %s: %w: %v", path, mesh.ErrMalformedResponse, err)
 	}
 	return nil
+}
+
+// requestHTTP opens one bounded-by-context operation on the reusable transport.
+// The caller owns closing every successful response body.
+func (r *Runtime) requestHTTP(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+	r.mu.Lock()
+	baseURL := r.baseURL
+	r.mu.Unlock()
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	response, err := r.client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("runtime %s: %w: %w", path, mesh.ErrUnavailable, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		return nil, fmt.Errorf("runtime %s HTTP %d: %w", path, response.StatusCode, mesh.ErrUnavailable)
+	}
+	return response, nil
 }
 
 // diagnostics continuously accepts stderr while retaining only the bounded tail.

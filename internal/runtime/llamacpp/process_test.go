@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	mesh "github.com/AbhinavSingh95/mica-mesh/internal/runtime"
 	"io"
 	"net"
 	"net/http"
@@ -19,6 +18,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	mesh "github.com/AbhinavSingh95/mica-mesh/internal/runtime"
 )
 
 type launch struct {
@@ -37,6 +38,13 @@ type fixture struct {
 	warmupGate                 chan struct{}
 	warmupStatus               int
 	server                     *httptest.Server
+	generateHandler            func(http.ResponseWriter, *http.Request)
+	tokenHandler               func(http.ResponseWriter, *http.Request)
+	templateHandler            func(http.ResponseWriter, *http.Request)
+	slotsHandler               func(http.ResponseWriter, *http.Request) bool
+	tokenCount                 int
+	completionCalls            atomic.Int32
+	terminated                 chan struct{}
 }
 
 func setup(t *testing.T) *fixture {
@@ -65,9 +73,16 @@ func setup(t *testing.T) *fixture {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
-	f := &fixture{cfg: mesh.Config{BinaryPath: binary, ModelPath: model, Backend: "cpu", Port: port, Model: mesh.Model{ID: "test-model", SHA256: hex.EncodeToString(sum[:]), ContextTokens: 2048}}, launched: make(chan launch, 1), healthCalled: make(chan struct{}, 32), warmupCalled: make(chan struct{}, 1), warmupStatus: 200}
+	f := &fixture{cfg: mesh.Config{BinaryPath: binary, ModelPath: model, Backend: "cpu", Port: port, Model: mesh.Model{ID: "test-model", SHA256: hex.EncodeToString(sum[:]), ContextTokens: 2048}}, launched: make(chan launch, 1), healthCalled: make(chan struct{}, 32), warmupCalled: make(chan struct{}, 1), warmupStatus: 200, tokenCount: 10}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
+		case "/termination":
+			if f.terminated != nil {
+				select {
+				case f.terminated <- struct{}{}:
+				default:
+				}
+			}
 		case "/launch":
 			var l launch
 			if err := json.NewDecoder(req.Body).Decode(&l); err != nil {
@@ -85,7 +100,36 @@ func setup(t *testing.T) *fixture {
 			} else {
 				io.WriteString(w, `{"status":"ok"}`)
 			}
+		case "/apply-template":
+			if f.templateHandler != nil {
+				f.templateHandler(w, req)
+				return
+			}
+			io.WriteString(w, `{"prompt":"formatted conversation"}`)
+		case "/tokenize":
+			if f.tokenHandler != nil {
+				f.tokenHandler(w, req)
+				return
+			}
+			var body struct {
+				Content      string
+				AddSpecial   bool `json:"add_special"`
+				ParseSpecial bool `json:"parse_special"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Content != "formatted conversation" || !body.AddSpecial || !body.ParseSpecial {
+				t.Errorf("tokenization body = %+v", body)
+			}
+			tokens := make([]int, f.tokenCount)
+			_ = json.NewEncoder(w).Encode(struct {
+				Tokens []int `json:"tokens"`
+			}{tokens})
 		case "/slots":
+			if f.slotsHandler != nil && f.slotsHandler(w, req) {
+				return
+			}
 			fmt.Fprintf(w, `[{"id":0,"n_ctx":%d,"is_processing":%t}]`, f.cfg.Model.ContextTokens, f.processing.Load())
 		case "/props":
 			if f.propsOverride != "" {
@@ -94,15 +138,26 @@ func setup(t *testing.T) *fixture {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"model_path": f.cfg.ModelPath, "total_slots": 1, "build_info": "version: 0.5.0 (build 1, commit 7fe450e)", "is_sleeping": false})
 		case "/completion":
+			payload, _ := io.ReadAll(req.Body)
 			var body struct {
 				Prompt   string
 				NPredict int `json:"n_predict"`
 				Stream   bool
 			}
-			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			if err := json.Unmarshal(payload, &body); err != nil {
 				t.Error(err)
 			}
-			if body.Prompt == "" || body.NPredict != 1 || body.Stream {
+			if body.Stream {
+				req.Body = io.NopCloser(strings.NewReader(string(payload)))
+				f.completionCalls.Add(1)
+				if f.generateHandler != nil {
+					f.generateHandler(w, req)
+				} else {
+					io.WriteString(w, "data: {\"content\":\"Hi\",\"stop\":false}\n\ndata: {\"content\":\"\",\"stop\":true,\"stop_type\":\"eos\"}\n\n")
+				}
+				return
+			}
+			if body.Prompt == "" || body.NPredict != 1 {
 				t.Errorf("wrong warmup: %+v", body)
 			}
 			select {
