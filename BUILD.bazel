@@ -24,6 +24,7 @@ filegroup(
         "//internal/cli:format_srcs",
         "//internal/config:format_srcs",
         "//internal/controller:format_srcs",
+        "//internal/discovery:format_srcs",
         "//internal/hardware:format_srcs",
         "//internal/protocol:format_srcs",
         "//internal/runtime:format_srcs",
@@ -32,6 +33,7 @@ filegroup(
         "//internal/testutil/fakeruntime:format_srcs",
         "//internal/worker:format_srcs",
         "//protocol/mesh/v1:format_srcs",
+        "//third_party/patches:format_srcs",
     ],
 )
 

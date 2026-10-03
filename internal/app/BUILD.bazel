@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//internal/config",
         "//internal/controller",
+        "//internal/discovery",
         "//internal/hardware",
         "//internal/protocol",
         "//internal/runtime",
@@ -30,6 +31,7 @@ go_test(
     env = {"MICA_TEST_SERVER": "$(rlocationpath //internal/runtime/llamacpp/testserver)"},
     deps = [
         "//internal/config",
+        "//internal/discovery",
         "//internal/runtime",
         "//internal/runtime/llamacpp",
         "//internal/testutil/fakeruntime",

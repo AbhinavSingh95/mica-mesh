@@ -41,14 +41,14 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	c, err := parse(args)
 	if err == nil && c.name == "run" {
-		if err := runInference(ctx, c.cfg, c.prompt, stdout, stderr, resolveExplicit(c.cfg.ControllerAddress)); err != nil {
+		if err := runInference(ctx, c.cfg, c.prompt, stdout, stderr, resolveController(c.cfg.ControllerAddress)); err != nil {
 			return 1
 		}
 		return 0
 	}
 	if c.name == "status" {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 	}
 	release, bindErr := bindOutput(ctx, stdout, stderr)
@@ -78,15 +78,15 @@ const usage = `mica-mesh — private LAN inference mesh
 
 Usage:
   mica-mesh start --controller [--worker] [options]
-  mica-mesh start --worker --controller-address HOST:PORT [options]
-  mica-mesh status --controller-address HOST:PORT [options]
-  mica-mesh run --controller-address HOST:PORT [options] "prompt"
+  mica-mesh start --worker [--controller-address HOST:PORT] [options]
+  mica-mesh status [--controller-address HOST:PORT] [options]
+  mica-mesh run [--controller-address HOST:PORT] [options] "prompt"
 
 Options:
   --config PATH                 JSON config (default ~/.config/mica-mesh/config.json)
   --controller-listen HOST:PORT  Controller listener (default 0.0.0.0:50051)
   --worker-listen HOST:PORT      Worker listener (default 0.0.0.0:50052)
-  --advertise-address IPv4       Worker reachable address override
+  --advertise-address IPv4       Local LAN IPv4 address override
   --runtime-binary PATH          Absolute prepared llama-server path
   --model-path PATH              Absolute prepared GGUF path
   --runtime-port PORT            Loopback runtime port (default 8080)
@@ -96,5 +96,6 @@ Options:
   --timeout DURATION             Total run budget (default/maximum 300s)
   -h, --help                     Show this help
 
-Explicit addresses are required until controller discovery is delivered.
+Without --controller-address, discover one compatible LAN controller (3 seconds).
+If multicast is unavailable or several controllers are found, use an explicit address.
 `

@@ -1,0 +1,563 @@
+diff --git a/client.go b/client.go
+--- a/client.go
++++ b/client.go
+@@ -8,6 +8,7 @@
+ 	"net"
+ 	"runtime"
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/miekg/dns"
+@@ -67,6 +68,9 @@
+ // Received entries are sent on the entries channel.
+ // It blocks until the context is canceled (or an error occurs).
+ func Browse(ctx context.Context, service, domain string, entries chan<- *ServiceEntry, opts ...ClientOption) error {
++	if err := ctx.Err(); err != nil {
++		return err
++	}
+ 	cl, err := newClient(applyOpts(opts...))
+ 	if err != nil {
+ 		return err
+@@ -84,6 +88,9 @@
+ // Received entries are sent on the entries channel.
+ // It blocks until the context is canceled (or an error occurs).
+ func Lookup(ctx context.Context, instance, service, domain string, entries chan<- *ServiceEntry, opts ...ClientOption) error {
++	if err := ctx.Err(); err != nil {
++		return err
++	}
+ 	cl, err := newClient(applyOpts(opts...))
+ 	if err != nil {
+ 		return err
+@@ -152,6 +159,9 @@
+ 		var err error
+ 		ipv6conn, err = joinUdp6Multicast(ifaces)
+ 		if err != nil {
++			if ipv4conn != nil {
++				ipv4conn.Close()
++			}
+ 			return nil, err
+ 		}
+ 	}
+@@ -167,13 +177,19 @@
+ 
+ // Start listeners and waits for the shutdown signal from exit channel
+ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
++	// The main loop owns readers. Closing sockets interrupts ReadFrom; the
++	// canceled context releases readers waiting to deliver an internal message.
++	var readers sync.WaitGroup
++	defer func() { c.shutdown(); readers.Wait(); params.done() }()
+ 	// start listening for responses
+ 	msgCh := make(chan *dns.Msg, 32)
+ 	if c.ipv4conn != nil {
+-		go c.recv(ctx, c.ipv4conn, msgCh)
++		readers.Add(1)
++		go func() { defer readers.Done(); c.recv(ctx, c.ipv4conn, msgCh) }()
+ 	}
+ 	if c.ipv6conn != nil {
+-		go c.recv(ctx, c.ipv6conn, msgCh)
++		readers.Add(1)
++		go func() { defer readers.Done(); c.recv(ctx, c.ipv6conn, msgCh) }()
+ 	}
+ 
+ 	// Iterate through channels from listeners goroutines
+@@ -187,8 +203,6 @@
+ 		select {
+ 		case <-ctx.Done():
+ 			// Context expired. Notify subscriber that we are done here.
+-			params.done()
+-			c.shutdown()
+ 			return
+ 		case t := <-ticker.C:
+ 			for k, e := range sentEntries {
+@@ -292,7 +306,11 @@
+ 				// Submit entry to subscriber and cache it.
+ 				// This is also a point to possibly stop probing actively for a
+ 				// service entry.
+-				params.Entries <- e
++				select {
++				case params.Entries <- e:
++				case <-ctx.Done():
++					return
++				}
+ 				sentEntries[k] = e
+ 				if !params.isBrowsing {
+ 					params.disableProbing()
+@@ -370,7 +388,7 @@
+ // go routine context.
+ func (c *client) periodicQuery(ctx context.Context, params *lookupParams) error {
+ 	// Do the first query immediately.
+-	if err := c.query(params); err != nil {
++	if err := c.query(ctx, params); err != nil {
+ 		return err
+ 	}
+ 
+@@ -393,7 +411,7 @@
+ 			return ctx.Err()
+ 		}
+ 
+-		if err := c.query(params); err != nil {
++		if err := c.query(ctx, params); err != nil {
+ 			return err
+ 		}
+ 		// Exponential increase of the interval with jitter:
+@@ -410,7 +428,7 @@
+ 
+ // Performs the actual query by service name (browse) or service instance name (lookup),
+ // start response listeners goroutines and loops over the entries channel.
+-func (c *client) query(params *lookupParams) error {
++func (c *client) query(ctx context.Context, params *lookupParams) error {
+ 	var serviceName, serviceInstanceName string
+ 	serviceName = fmt.Sprintf("%s.%s.", trimDot(params.Service), trimDot(params.Domain))
+ 
+@@ -428,11 +446,29 @@
+ 		m.SetQuestion(serviceName, dns.TypePTR)
+ 	}
+ 	m.RecursionDesired = false
+-	return c.sendQuery(m)
++	return c.sendQuery(ctx, m)
+ }
+ 
+ // Pack the dns.Msg and write to available connections (multicast)
+-func (c *client) sendQuery(msg *dns.Msg) error {
++func (c *client) sendQuery(ctx context.Context, msg *dns.Msg) error {
++	if err := ctx.Err(); err != nil {
++		return err
++	}
++	deadline := time.Now().Add(writeTimeout)
++	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
++		deadline = end
++	}
++	if c.ipv4conn != nil {
++		if err := c.ipv4conn.SetWriteDeadline(deadline); err != nil {
++			return err
++		}
++	}
++	if c.ipv6conn != nil {
++		if err := c.ipv6conn.SetWriteDeadline(deadline); err != nil {
++			return err
++		}
++	}
++
+ 	buf, err := msg.Pack()
+ 	if err != nil {
+ 		return err
+@@ -451,7 +487,9 @@
+ 					log.Printf("[WARN] mdns: Failed to set multicast interface: %v", err)
+ 				}
+ 			}
+-			c.ipv4conn.WriteTo(buf, &wcm, ipv4Addr)
++			if _, err := c.ipv4conn.WriteTo(buf, &wcm, ipv4Addr); err != nil {
++				return err
++			}
+ 		}
+ 	}
+ 	if c.ipv6conn != nil {
+@@ -468,7 +506,9 @@
+ 					log.Printf("[WARN] mdns: Failed to set multicast interface: %v", err)
+ 				}
+ 			}
+-			c.ipv6conn.WriteTo(buf, &wcm, ipv6Addr)
++			if _, err := c.ipv6conn.WriteTo(buf, &wcm, ipv6Addr); err != nil {
++				return err
++			}
+ 		}
+ 	}
+ 	return nil
+diff --git a/server.go b/server.go
+--- a/server.go
++++ b/server.go
+@@ -21,6 +21,9 @@
+ 	multicastRepetitions = 2
+ )
+ 
++// One deadline covers every write in an operation, including all interfaces.
++const writeTimeout = time.Second
++
+ var defaultTTL uint32 = 3200
+ 
+ type serverOpts struct {
+@@ -102,7 +105,9 @@
+ 	}
+ 
+ 	s.service = entry
+-	s.start()
++	if err := s.start(); err != nil {
++		return nil, err
++	}
+ 
+ 	return s, nil
+ }
+@@ -158,7 +163,9 @@
+ 	}
+ 
+ 	s.service = entry
+-	s.start()
++	if err := s.start(); err != nil {
++		return nil, err
++	}
+ 
+ 	return s, nil
+ }
+@@ -176,6 +183,7 @@
+ 
+ 	shouldShutdown chan struct{}
+ 	shutdownLock   sync.Mutex
++	writeLock      sync.Mutex
+ 	refCount       sync.WaitGroup
+ 	isShutdown     bool
+ 	ttl            uint32
+@@ -207,7 +215,16 @@
+ 	return s, nil
+ }
+ 
+-func (s *Server) start() {
++func (s *Server) start() error {
++	// An IPv4-only proxy is unusable to IPv4 browsers without that socket.
++	// Close partial initialization before any reader/probe is launched.
++	if len(s.service.AddrIPv4) > 0 && len(s.service.AddrIPv6) == 0 && s.ipv4conn == nil {
++		if s.ipv6conn != nil {
++			s.ipv6conn.Close()
++		}
++		return fmt.Errorf("IPv4 service has no IPv4 multicast socket")
++	}
++
+ 	if s.ipv4conn != nil {
+ 		s.refCount.Add(1)
+ 		go s.recv4(s.ipv4conn)
+@@ -218,6 +235,7 @@
+ 	}
+ 	s.refCount.Add(1)
+ 	go s.probe()
++	return nil
+ }
+ 
+ // SetText updates and announces the TXT records
+@@ -241,11 +259,11 @@
+ 		return
+ 	}
+ 
++	close(s.shouldShutdown)
++
+ 	if err := s.unregister(); err != nil {
+ 		log.Printf("failed to unregister: %s", err)
+ 	}
+-
+-	close(s.shouldShutdown)
+ 
+ 	if s.ipv4conn != nil {
+ 		s.ipv4conn.Close()
+@@ -549,7 +567,7 @@
+ }
+ 
+ // Perform probing & announcement
+-//TODO: implement a proper probing & conflict resolution
++// TODO: implement a proper probing & conflict resolution
+ func (s *Server) probe() {
+ 	defer s.refCount.Done()
+ 
+@@ -656,7 +674,7 @@
+ 	resp.Answer = []dns.RR{}
+ 	resp.Extra = []dns.RR{}
+ 	s.composeLookupAnswers(resp, 0, 0, true)
+-	return s.multicastResponse(resp, 0)
++	return s.multicastResponseDuringStop(resp, 0, true)
+ }
+ 
+ func (s *Server) appendAddrs(list []dns.RR, ttl uint32, ifIndex int, flushCache bool) []dns.RR {
+@@ -732,6 +750,17 @@
+ 
+ // unicastResponse is used to send a unicast response packet
+ func (s *Server) unicastResponse(resp *dns.Msg, ifIndex int, from net.Addr) error {
++	s.writeLock.Lock()
++	defer s.writeLock.Unlock()
++	select {
++	case <-s.shouldShutdown:
++		return nil
++	default:
++	}
++	if err := s.setWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
++		return err
++	}
++
+ 	buf, err := resp.Pack()
+ 	if err != nil {
+ 		return err
+@@ -760,6 +789,26 @@
+ 
+ // multicastResponse is used to send a multicast response packet
+ func (s *Server) multicastResponse(msg *dns.Msg, ifIndex int) error {
++	return s.multicastResponseDuringStop(msg, ifIndex, false)
++}
++
++// Shutdown first closes shouldShutdown, then waits for at most the current
++// bounded write operation and one bounded goodbye. No ordinary sender can
++// refresh the goodbye deadline, and no join holds writeLock.
++func (s *Server) multicastResponseDuringStop(msg *dns.Msg, ifIndex int, goodbye bool) error {
++	s.writeLock.Lock()
++	defer s.writeLock.Unlock()
++	if !goodbye {
++		select {
++		case <-s.shouldShutdown:
++			return nil
++		default:
++		}
++	}
++	if err := s.setWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
++		return err
++	}
++
+ 	buf, err := msg.Pack()
+ 	if err != nil {
+ 		return fmt.Errorf("failed to pack msg %v: %w", msg, err)
+@@ -779,7 +828,9 @@
+ 					log.Printf("[WARN] mdns: Failed to set multicast interface: %v", err)
+ 				}
+ 			}
+-			s.ipv4conn.WriteTo(buf, &wcm, ipv4Addr)
++			if _, err := s.ipv4conn.WriteTo(buf, &wcm, ipv4Addr); err != nil {
++				return err
++			}
+ 		} else {
+ 			for _, intf := range s.ifaces {
+ 				switch runtime.GOOS {
+@@ -790,7 +841,9 @@
+ 						log.Printf("[WARN] mdns: Failed to set multicast interface: %v", err)
+ 					}
+ 				}
+-				s.ipv4conn.WriteTo(buf, &wcm, ipv4Addr)
++				if _, err := s.ipv4conn.WriteTo(buf, &wcm, ipv4Addr); err != nil {
++					return err
++				}
+ 			}
+ 		}
+ 	}
+@@ -810,7 +863,9 @@
+ 					log.Printf("[WARN] mdns: Failed to set multicast interface: %v", err)
+ 				}
+ 			}
+-			s.ipv6conn.WriteTo(buf, &wcm, ipv6Addr)
++			if _, err := s.ipv6conn.WriteTo(buf, &wcm, ipv6Addr); err != nil {
++				return err
++			}
+ 		} else {
+ 			for _, intf := range s.ifaces {
+ 				switch runtime.GOOS {
+@@ -821,7 +876,9 @@
+ 						log.Printf("[WARN] mdns: Failed to set multicast interface: %v", err)
+ 					}
+ 				}
+-				s.ipv6conn.WriteTo(buf, &wcm, ipv6Addr)
++				if _, err := s.ipv6conn.WriteTo(buf, &wcm, ipv6Addr); err != nil {
++					return err
++				}
+ 			}
+ 		}
+ 	}
+@@ -837,3 +894,17 @@
+ 	//    for this particular question.  (See Section 5.4.)
+ 	return q.Qclass&qClassCacheFlush != 0
+ }
++
++func (s *Server) setWriteDeadline(deadline time.Time) error {
++	if s.ipv4conn != nil {
++		if err := s.ipv4conn.SetWriteDeadline(deadline); err != nil {
++			return err
++		}
++	}
++	if s.ipv6conn != nil {
++		if err := s.ipv6conn.SetWriteDeadline(deadline); err != nil {
++			return err
++		}
++	}
++	return nil
++}
+diff --git a/mica_lifecycle_test.go b/mica_lifecycle_test.go
+--- /dev/null
++++ b/mica_lifecycle_test.go
+@@ -0,0 +1,170 @@
++package zeroconf
++
++import (
++	"context"
++	"github.com/miekg/dns"
++	"golang.org/x/net/ipv4"
++	"golang.org/x/net/ipv6"
++	"net"
++	"sync"
++	"testing"
++	"time"
++)
++
++func loopbackPacket(t *testing.T) *ipv4.PacketConn {
++	t.Helper()
++	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { conn.Close() })
++	return ipv4.NewPacketConn(conn)
++}
++func TestMicaMulticastWriteError(t *testing.T) {
++	conn := loopbackPacket(t)
++	conn.Close()
++	s := &Server{ipv4conn: conn, shouldShutdown: make(chan struct{})}
++	if err := s.multicastResponse(new(dns.Msg), 1); err == nil {
++		t.Fatal("multicast dropped socket write/deadline error")
++	}
++}
++func TestMicaClientReturnsAfterReaderCleanup(t *testing.T) {
++	conn := loopbackPacket(t)
++	c := &client{ipv4conn: conn}
++	ctx, cancel := context.WithCancel(context.Background())
++	params := defaultParams("_mica-mesh._tcp")
++	params.isBrowsing = true
++	entries := make(chan *ServiceEntry)
++	params.Entries = entries
++	done := make(chan error, 1)
++	go func() { done <- c.run(ctx, params) }()
++	cancel()
++	select {
++	case <-done:
++	case <-time.After(2 * time.Second):
++		t.Fatal("browser did not join")
++	}
++	if _, ok := <-entries; ok {
++		t.Fatal("results open after completion")
++	}
++	if err := conn.SetReadDeadline(time.Now()); err == nil {
++		t.Fatal("socket open after completion")
++	}
++}
++func TestMicaConcurrentShutdownJoinsProbe(t *testing.T) {
++	s := &Server{service: newServiceEntry("instance", "_mica-mesh._tcp", "local."), shouldShutdown: make(chan struct{})}
++	s.service.HostName = "test.local."
++	s.service.Port = 1234
++	s.service.AddrIPv4 = []net.IP{net.ParseIP("192.0.2.1")}
++	s.ipv4conn = loopbackPacket(t)
++	if err := s.start(); err != nil {
++		t.Fatal(err)
++	}
++	var wg sync.WaitGroup
++	for range 8 {
++		wg.Add(1)
++		go func() { defer wg.Done(); s.Shutdown() }()
++	}
++	done := make(chan struct{})
++	go func() { wg.Wait(); close(done) }()
++	select {
++	case <-done:
++	case <-time.After(2 * time.Second):
++		t.Fatal("shutdown did not join")
++	}
++}
++func TestMicaUnreadResultsCancel(t *testing.T) {
++	raw, err := net.ListenPacket("udp4", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer raw.Close()
++	c := &client{ipv4conn: ipv4.NewPacketConn(raw)}
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	params := defaultParams("_mica-mesh._tcp")
++	params.isBrowsing = true
++	entries := make(chan *ServiceEntry)
++	params.Entries = entries
++	done := make(chan struct{})
++	go func() { defer close(done); c.mainloop(ctx, params) }()
++	message := new(dns.Msg)
++	for _, instance := range []string{"one", "two"} {
++		name := instance + "._mica-mesh._tcp.local."
++		host := instance + ".local."
++		message.Answer = append(message.Answer, &dns.SRV{Hdr: dns.RR_Header{Name: name, Rrtype: dns.TypeSRV, Class: dns.ClassINET, Ttl: 120}, Port: 1234, Target: host}, &dns.A{Hdr: dns.RR_Header{Name: host, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 120}, A: net.ParseIP("192.0.2.1")})
++	}
++	packet, err := message.Pack()
++	if err != nil {
++		t.Fatal(err)
++	}
++	writer, err := net.Dial("udp4", raw.LocalAddr().String())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer writer.Close()
++	if _, err := writer.Write(packet); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case <-entries:
++	case <-time.After(time.Second):
++		t.Fatal("first result missing")
++	}
++	cancel()
++	select {
++	case <-done:
++	case <-time.After(time.Second):
++		t.Fatal("unread second result stranded browser")
++	}
++}
++func TestMicaStoppedServerSkipsWrites(t *testing.T) {
++	conn := loopbackPacket(t)
++	conn.Close()
++	s := &Server{ipv4conn: conn, shouldShutdown: make(chan struct{})}
++	close(s.shouldShutdown)
++	if err := s.multicastResponse(new(dns.Msg), 1); err != nil {
++		t.Fatalf("stopped sender touched socket: %v", err)
++	}
++	if err := s.unicastResponse(new(dns.Msg), 0, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}); err != nil {
++		t.Fatalf("stopped unicast touched socket: %v", err)
++	}
++}
++func TestMicaWriteDeadlineBoundsSocket(t *testing.T) {
++	conn := loopbackPacket(t)
++	s := &Server{ipv4conn: conn}
++	if err := s.setWriteDeadline(time.Now().Add(-time.Second)); err != nil {
++		t.Fatal(err)
++	}
++	_, err := conn.WriteTo([]byte("test"), nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1})
++	if e, ok := err.(net.Error); !ok || !e.Timeout() {
++		t.Fatalf("write was not deadline-bounded: %v", err)
++	}
++}
++func TestMicaCanceledQuerySkipsWrites(t *testing.T) {
++	conn := loopbackPacket(t)
++	conn.Close()
++	c := &client{ipv4conn: conn}
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	if err := c.sendQuery(ctx, new(dns.Msg)); err != context.Canceled {
++		t.Fatalf("query ignored cancellation: %v", err)
++	}
++}
++
++func TestMicaIPv4ProxyRejectsMissingIPv4Socket(t *testing.T) {
++	raw, err := net.ListenPacket("udp4", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer raw.Close()
++	s := &Server{service: newServiceEntry("instance", "_mica-mesh._tcp", "local."), ipv6conn: ipv6.NewPacketConn(raw), shouldShutdown: make(chan struct{})}
++	s.service.AddrIPv4 = []net.IP{net.ParseIP("192.0.2.1")}
++	if err := s.start(); err == nil {
++		s.Shutdown()
++		t.Fatal("IPv4-only proxy started without IPv4 socket")
++	}
++	if err := raw.SetReadDeadline(time.Now()); err == nil {
++		t.Fatal("partial IPv6 socket leaked")
++	}
++}
+diff --git a/BUILD.bazel b/BUILD.bazel
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -31,3 +31,11 @@
+     srcs = ["service_test.go"],
+     embed = [":zeroconf"],
+ )
++
++go_test(
++    name = "mica_lifecycle_test",
++    srcs = ["mica_lifecycle_test.go"],
++    embed = [":zeroconf"],
++    deps = ["@com_github_miekg_dns//:dns", "@org_golang_x_net//ipv4", "@org_golang_x_net//ipv6"],
++    visibility = ["//visibility:public"],
++)

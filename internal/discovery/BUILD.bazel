@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "discovery",
+    srcs = [
+        "discovery.go",
+        "mdns.go",
+    ],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/discovery",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/protocol",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_libp2p_zeroconf_v2//:zeroconf",
+    ],
+)
+
+go_test(
+    name = "discovery_test",
+    srcs = ["discovery_test.go"],
+    embed = [":discovery"],
+    deps = [
+        "//internal/config",
+        "//internal/controller",
+        "//protocol/mesh/v1:mesh",
+    ],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

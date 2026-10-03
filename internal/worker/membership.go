@@ -40,7 +40,8 @@ func runMembership(ctx context.Context, svc *Service, endpoint string, resolve f
 	}()
 	delay := time.Second
 	for ctx.Err() == nil {
-		lookup, cancel := context.WithTimeout(ctx, 3*time.Second)
+		// Leave route validation time after the resolver's full three-second browse.
+		lookup, cancel := context.WithTimeout(ctx, 4*time.Second)
 		target, err := resolve(lookup)
 		cancel()
 		if err == nil {

@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AbhinavSingh95/mica-mesh/internal/config"
+	"github.com/AbhinavSingh95/mica-mesh/internal/discovery"
 	"github.com/AbhinavSingh95/mica-mesh/internal/protocol"
 	meshv1 "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1"
 	"github.com/google/uuid"
@@ -120,28 +120,8 @@ func parse(args []string) (command, error) {
 	return c, config.Validate(cfg, c.roles)
 }
 
-// Explicit resolution is deliberately the only resolver until discovery is delivered.
-func resolveExplicit(address string) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		if address == "" {
-			return "", errors.New("controller discovery is pending; provide --controller-address HOST:PORT")
-		}
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return "", err
-		}
-		ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
-		if err != nil {
-			return "", fmt.Errorf("resolve controller: %w", err)
-		}
-		if len(ips) == 0 {
-			return "", errors.New("controller has no IPv4 address")
-		}
-		return net.JoinHostPort(ips[0].String(), port), nil
-	}
+func resolveController(address string) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) { return discovery.Resolve(ctx, address) }
 }
 func connect(address string) (*grpc.ClientConn, error) {
 	return grpc.NewClient("passthrough:///"+address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(protocol.GenerationMessageBytes), grpc.MaxCallSendMsgSize(protocol.GenerationMessageBytes)))
@@ -276,7 +256,10 @@ func bindOutput(ctx context.Context, writers ...io.Writer) (func(), error) {
 }
 
 func clusterStatus(ctx context.Context, address string, stdout io.Writer) (err error) {
-	target, err := resolveExplicit(address)(ctx)
+	return clusterStatusWithResolver(ctx, stdout, resolveController(address))
+}
+func clusterStatusWithResolver(ctx context.Context, stdout io.Writer, resolve func(context.Context) (string, error)) (err error) {
+	target, err := resolve(ctx)
 	if err != nil {
 		return err
 	}
@@ -285,7 +268,9 @@ func clusterStatus(ctx context.Context, address string, stdout io.Writer) (err e
 		return err
 	}
 	defer func() { err = errors.Join(err, conn.Close()) }()
-	response, err := meshv1.NewControllerServiceClient(conn).GetClusterStatus(ctx, &meshv1.GetClusterStatusRequest{}, grpc.MaxCallRecvMsgSize(protocol.StatusMessageBytes))
+	rpc, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	response, err := meshv1.NewControllerServiceClient(conn).GetClusterStatus(rpc, &meshv1.GetClusterStatusRequest{}, grpc.MaxCallRecvMsgSize(protocol.StatusMessageBytes))
 	if err != nil {
 		return err
 	}

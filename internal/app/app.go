@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"time"
 
 	"github.com/AbhinavSingh95/mica-mesh/internal/config"
 	"github.com/AbhinavSingh95/mica-mesh/internal/controller"
+	"github.com/AbhinavSingh95/mica-mesh/internal/discovery"
 	"github.com/AbhinavSingh95/mica-mesh/internal/hardware"
 	"github.com/AbhinavSingh95/mica-mesh/internal/protocol"
 	"github.com/AbhinavSingh95/mica-mesh/internal/runtime"
@@ -50,9 +52,42 @@ func Run(ctx context.Context, cfg config.Config, roles config.Role) error {
 	return run(ctx, cfg, roles, llamacpp.New(), cl, wl)
 }
 
-// run takes ownership of supplied active-role listeners and the runtime. Tests
-// supply the designed fake; there is no user-facing fake mode.
-func run(ctx context.Context, cfg config.Config, roles config.Role, rt runtime.Runtime, cl, wl net.Listener) (err error) {
+// discoveryEffects is the private boundary for multicast and interface I/O.
+type discoveryEffects struct {
+	resolve   func(context.Context, string) (string, error)
+	advertise func(context.Context, discovery.ControllerInfo) (func(), error)
+	localIPv4 func(string, net.IP) (string, error)
+}
+
+// run takes ownership of supplied active-role listeners and the runtime.
+func run(ctx context.Context, cfg config.Config, roles config.Role, rt runtime.Runtime, cl, wl net.Listener) error {
+	return runWithDiscovery(ctx, cfg, roles, rt, cl, wl, discoveryEffects{discovery.Resolve, discovery.Advertise, discovery.LocalIPv4})
+}
+func runWithDiscovery(ctx context.Context, cfg config.Config, roles config.Role, rt runtime.Runtime, cl, wl net.Listener, discover discoveryEffects) (err error) {
+	if roles&config.RoleWorker != 0 && cfg.AdvertiseAddress != "" {
+		if err := discovery.ValidateLocalIPv4(cfg.AdvertiseAddress, wl.Addr().(*net.TCPAddr).IP, roles&config.RoleController != 0); err != nil {
+			err = errors.Join(err, wl.Close())
+			if cl != nil {
+				err = errors.Join(err, cl.Close())
+			}
+			return err
+		}
+	}
+	var advertisement discovery.ControllerInfo
+	if roles&config.RoleController != 0 {
+		address := cl.Addr().(*net.TCPAddr)
+		ip, selectErr := discover.localIPv4(cfg.AdvertiseAddress, address.IP)
+		hostname, hostErr := os.Hostname()
+		if err = errors.Join(selectErr, hostErr); err != nil {
+			err = errors.Join(err, cl.Close())
+			if wl != nil {
+				err = errors.Join(err, wl.Close())
+			}
+			return err
+		}
+		advertisement = discovery.ControllerInfo{InstanceID: uuid.NewString(), Hostname: hostname, IPv4: ip, Port: address.Port, ProtocolMajor: protocol.Major}
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	results := make(chan error, 5)
@@ -67,7 +102,7 @@ func run(ctx context.Context, cfg config.Config, roles config.Role, rt runtime.R
 	}
 	target := cfg.ControllerAddress
 	if roles&config.RoleController != 0 {
-		id := uuid.NewString()
+		id := advertisement.InstanceID
 		controllerSvc = controller.New(id, controller.NewRegistry(cfg.ModelDescriptor))
 		g := server()
 		meshv1.RegisterControllerServiceServer(g, controllerSvc)
@@ -75,6 +110,13 @@ func run(ctx context.Context, cfg config.Config, roles config.Role, rt runtime.R
 		launch(func() error { return controllerSvc.Run(ctx) })
 		target = controllerEndpoint(cl.Addr())
 		slog.Info("controller listening", "controller_id", id, "controller_address", cl.Addr().String())
+		stop, advertiseErr := discover.advertise(ctx, advertisement)
+		if advertiseErr != nil {
+			slog.Warn("controller discovery unavailable; use --controller-address", "controller_address", net.JoinHostPort(advertisement.IPv4, fmt.Sprint(advertisement.Port)), "error", advertiseErr)
+		} else {
+			defer stop()
+		}
+
 	}
 	if roles&config.RoleWorker != 0 {
 		rc := runtime.Config{BinaryPath: cfg.RuntimeBinary, ModelPath: cfg.ModelPath, Backend: cfg.Backend, Port: cfg.RuntimePort, Model: cfg.ModelDescriptor}
@@ -84,7 +126,9 @@ func run(ctx context.Context, cfg config.Config, roles config.Role, rt runtime.R
 		meshv1.RegisterWorkerServiceServer(g, svc)
 		launch(func() error { return g.Serve(wl) })
 		launch(func() error { return svc.RunRuntime(ctx) })
-		launch(func() error { return joinWorker(ctx, svc, cfg.AdvertiseAddress, target, wl.Addr()) })
+		launch(func() error {
+			return joinWorker(ctx, svc, cfg.AdvertiseAddress, target, wl.Addr(), roles&config.RoleController != 0, discover.resolve)
+		})
 		slog.Info("worker listening", "worker_id", id, "worker_address", wl.Addr().String())
 	}
 	select {
@@ -117,18 +161,35 @@ func run(ctx context.Context, cfg config.Config, roles config.Role, rt runtime.R
 	}
 	return err
 }
-func joinWorker(ctx context.Context, svc *worker.Service, override, target string, listen net.Addr) error {
+func joinWorker(ctx context.Context, svc *worker.Service, override, explicit string, listen net.Addr, local bool, resolve func(context.Context, string) (string, error)) error {
 	delay := time.Second
 	for ctx.Err() == nil {
-		lookup, cancel := context.WithTimeout(ctx, 3*time.Second)
-		endpoint, err := workerEndpoint(lookup, override, target, listen)
+		lookup, cancel := context.WithTimeout(ctx, 4*time.Second)
+		target, err := resolve(lookup, explicit)
+		endpoint := ""
+		if err == nil {
+			endpoint, err = workerEndpointFor(lookup, override, target, listen, local)
+		}
 		cancel()
 		if err == nil {
+			first := true
 			return worker.RunMembership(ctx, svc, endpoint, func(ctx context.Context) (string, error) {
-				if err := ctx.Err(); err != nil {
+				if first {
+					first = false
+					return target, nil
+				}
+				next, err := resolve(ctx, explicit)
+				if err != nil {
 					return "", err
 				}
-				return target, nil
+				nextEndpoint, err := workerEndpointFor(ctx, override, next, listen, local)
+				if err != nil {
+					return "", err
+				}
+				if nextEndpoint != endpoint {
+					return "", errors.New("worker route changed; restart with --advertise-address matching the new route")
+				}
+				return next, nil
 			})
 		}
 		slog.Warn("prepare worker membership", "controller", target, "error", err)
@@ -148,32 +209,25 @@ func joinWorker(ctx context.Context, svc *worker.Service, override, target strin
 	}
 	return nil
 }
-func workerEndpoint(ctx context.Context, override, target string, listen net.Addr) (string, error) {
-	if target == "" {
-		return "", errors.New("controller discovery is pending; provide --controller-address HOST:PORT")
+func workerEndpointFor(ctx context.Context, override, target string, listen net.Addr, local bool) (string, error) {
+	bound := listen.(*net.TCPAddr)
+	ip := override
+	if ip == "" {
+		// A UDP route lookup sends no application traffic. Its ephemeral port is
+		// never advertised; the actual listener's port is authoritative.
+		conn, err := (&net.Dialer{}).DialContext(ctx, "udp4", target)
+		if err != nil {
+			return "", fmt.Errorf("select worker route: %w", err)
+		}
+		ip = conn.LocalAddr().(*net.UDPAddr).IP.String()
+		if err := conn.Close(); err != nil {
+			return "", err
+		}
 	}
-	_, port, err := net.SplitHostPort(listen.String())
-	if err != nil {
+	if err := discovery.ValidateLocalIPv4(ip, bound.IP, local); err != nil {
 		return "", err
 	}
-	if override != "" {
-		return net.JoinHostPort(override, port), nil
-	}
-	// A UDP route probe selects the local source IP without sending application
-	// traffic. Its ephemeral source port is never the advertised service port.
-	conn, err := (&net.Dialer{}).DialContext(ctx, "udp4", target)
-	if err != nil {
-		return "", fmt.Errorf("select worker route: %w", err)
-	}
-	ip := conn.LocalAddr().(*net.UDPAddr).IP
-	err = conn.Close()
-	if err != nil {
-		return "", err
-	}
-	if ip.To4() == nil || ip.IsUnspecified() {
-		return "", errors.New("route has no concrete IPv4 source")
-	}
-	return net.JoinHostPort(ip.String(), port), nil
+	return net.JoinHostPort(ip, fmt.Sprint(bound.Port)), nil
 }
 
 func controllerEndpoint(address net.Addr) string {

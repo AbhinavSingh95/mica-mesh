@@ -1,0 +1,12 @@
+exports_files(["zeroconf_lifecycle.patch"])
+
+test_suite(
+    name = "zeroconf_lifecycle_test",
+    tests = ["@com_github_libp2p_zeroconf_v2//:mica_lifecycle_test"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

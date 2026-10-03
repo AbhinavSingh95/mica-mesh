@@ -107,7 +107,7 @@ func delta(s string) *meshv1.InferenceEvent {
 func completed() *meshv1.InferenceEvent {
 	return &meshv1.InferenceEvent{Payload: &meshv1.InferenceEvent_Completed{Completed: &meshv1.Completed{FinishReason: "stop"}}}
 }
-func serve(t *testing.T, s *streamController) string {
+func serve(t *testing.T, s meshv1.ControllerServiceServer) string {
 	t.Helper()
 	l, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -205,7 +205,7 @@ func TestWriteFailureCancelsRPC(t *testing.T) {
 	cfg.ControllerAddress = serve(t, s)
 	cfg.Timeout = time.Second
 	var diag bytes.Buffer
-	if err := runInference(context.Background(), cfg, "hello", failingWriter{}, &diag, resolveExplicit(cfg.ControllerAddress)); err == nil {
+	if err := runInference(context.Background(), cfg, "hello", failingWriter{}, &diag, resolveController(cfg.ControllerAddress)); err == nil {
 		t.Fatal("write failure succeeded")
 	}
 	select {
@@ -292,5 +292,51 @@ func TestNullFileNameDoesNotOverrideIdentity(t *testing.T) {
 	if release, err := bindOutput(context.Background(), spoof); err == nil {
 		release()
 		t.Fatal("unsupported device accepted by caller-provided file name")
+	}
+}
+
+type budgetController struct {
+	meshv1.UnimplementedControllerServiceServer
+	remaining chan time.Duration
+}
+
+func (s *budgetController) GetClusterStatus(ctx context.Context, _ *meshv1.GetClusterStatusRequest) (*meshv1.GetClusterStatusResponse, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil, errors.New("missing control deadline")
+	}
+	s.remaining <- time.Until(deadline)
+	return &meshv1.GetClusterStatusResponse{ControllerId: uuid.NewString()}, nil
+}
+func TestStatusHasRPCBudgetAfterDiscovery(t *testing.T) {
+	server := &budgetController{remaining: make(chan time.Duration, 1)}
+	address := serve(t, server)
+	var out bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := clusterStatusWithResolver(ctx, &out, func(ctx context.Context) (string, error) {
+		browse, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		<-browse.Done()
+		return address, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remaining := <-server.remaining; remaining < time.Second || remaining > 2*time.Second {
+		t.Fatalf("RPC remaining=%v", remaining)
+	}
+}
+func TestStatusPreservesEarlierCallerDeadline(t *testing.T) {
+	server := &budgetController{remaining: make(chan time.Duration, 1)}
+	address := serve(t, server)
+	var out bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := clusterStatusWithResolver(ctx, &out, func(context.Context) (string, error) { return address, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if remaining := <-server.remaining; remaining > 500*time.Millisecond {
+		t.Fatalf("extended caller deadline: %v", remaining)
 	}
 }

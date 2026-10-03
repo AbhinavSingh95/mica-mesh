@@ -23,4 +23,9 @@ use_repo(go_sdk, "go_sdk")
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
-use_repo(go_deps, "com_github_google_uuid", "org_golang_google_grpc", "org_golang_google_grpc_cmd_protoc_gen_go_grpc", "org_golang_google_protobuf", "org_golang_x_sys")
+go_deps.module_override(
+    patch_strip = 1,
+    patches = ["//third_party/patches:zeroconf_lifecycle.patch"],
+    path = "github.com/libp2p/zeroconf/v2",
+)
+use_repo(go_deps, "com_github_google_uuid", "com_github_libp2p_zeroconf_v2", "org_golang_google_grpc", "org_golang_google_grpc_cmd_protoc_gen_go_grpc", "org_golang_google_protobuf", "org_golang_x_sys")
