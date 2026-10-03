@@ -31,16 +31,17 @@ const (
 // RunRuntime is called once by the process owner, independently of membership.
 type Service struct {
 	meshv1.UnimplementedWorkerServiceServer
-	mu           sync.Mutex
-	id           string
-	cfg          mesh.Config
-	hardware     *meshv1.HardwareInfo
-	rt           mesh.Runtime
-	report       *meshv1.WorkerReport
-	revision     uint64
-	lifecycle    lifecycle
-	activeCancel context.CancelFunc
-	activeDone   chan struct{}
+	mu            sync.Mutex
+	id            string
+	cfg           mesh.Config
+	hardware      *meshv1.HardwareInfo
+	rt            mesh.Runtime
+	report        *meshv1.WorkerReport
+	revision      uint64
+	lifecycle     lifecycle
+	activeCancel  context.CancelFunc
+	activeDone    chan struct{}
+	runtimeActive bool // Includes activity whose idle/reap confirmation is still missing.
 }
 
 // New creates a starting worker. Configuration has already been structurally validated.
@@ -97,10 +98,9 @@ func (s *Service) Generate(req *meshv1.InferenceRequest, out grpc.ServerStreamin
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		s.report.Active = false
-		s.report.ActiveRequestId = nil
 		s.activeCancel = nil
 		s.activeDone = nil
+		s.updateActivityLocked()
 		s.revision++
 		close(done)
 		s.mu.Unlock()
@@ -139,7 +139,12 @@ func (s *Service) Generate(req *meshv1.InferenceRequest, out grpc.ServerStreamin
 	if err == nil && (!started || terminal == nil) {
 		err = mesh.ErrMalformedResponse
 	}
-	// Generate has now confirmed cleanup. A failure cannot be followed by Completed.
+	// A returned handler does not prove runtime idle when cleanup failed. Invalidate
+	// probes from before this return and retain ownership until a fresh idle result.
+	s.mu.Lock()
+	s.runtimeActive = true
+	s.revision++
+	s.mu.Unlock()
 	s.refreshHealth(context.WithoutCancel(ctx))
 	if errors.Is(err, mesh.ErrUnavailable) || errors.Is(err, mesh.ErrMalformedResponse) {
 		s.setState(meshv1.RuntimeState_RUNTIME_STATE_UNHEALTHY, "runtime generation failed")
@@ -191,7 +196,16 @@ func (s *Service) refreshHealth(ctx context.Context) (mesh.Health, error) {
 	health, err := s.rt.Health(probe)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.revision != revision || s.lifecycle == lifecycleStopping {
+	if s.revision != revision {
+		return health, err
+	}
+	if err == nil {
+		s.runtimeActive = health.Active
+		s.updateActivityLocked()
+	}
+	// Shutdown health may confirm activity ended, but cannot restore readiness.
+	if s.lifecycle == lifecycleStopping {
+		s.revision++
 		return health, err
 	}
 	if err != nil {
@@ -212,6 +226,15 @@ func (s *Service) refreshHealth(ctx context.Context) (mesh.Health, error) {
 	}
 	s.revision++
 	return health, err
+}
+
+// Handler ownership and runtime activity independently retain the local slot.
+// Call with mu held; discard the request identity only when both are idle.
+func (s *Service) updateActivityLocked() {
+	s.report.Active = s.activeDone != nil || s.runtimeActive
+	if !s.report.Active {
+		s.report.ActiveRequestId = nil
+	}
 }
 
 // Runtime stderr can be non-UTF-8 and larger than a control RPC. Keep reports

@@ -3,8 +3,10 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -268,4 +270,180 @@ func generate(t *testing.T, s *Service, req *meshv1.InferenceRequest, out *strea
 	}
 	_, _ = client.Recv() // the controlled sender emits locally; final status wakes Recv
 	return resultWait(t, result)
+}
+
+// cleanupRuntime models the real adapter's exceptional boundary: Generate has
+// returned, but idle/reap was not confirmed. The ordinary fake still supplies
+// synchronous events, admission and bounded cleanup for the generation itself.
+type cleanupRuntime struct {
+	*fakeruntime.Runtime
+	mu            sync.Mutex
+	cleanupHealth *mesh.Health
+	probeError    error
+	stopError     error
+	entered       chan struct{}
+	release       chan struct{}
+}
+
+func (r *cleanupRuntime) Generate(ctx context.Context, req mesh.Request, emit func(mesh.Event) error) error {
+	r.entered <- struct{}{}
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := r.Runtime.Generate(ctx, req, emit); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.cleanupHealth = &mesh.Health{State: mesh.StateUnhealthy, Active: true, LastError: "idle/reap not confirmed"}
+	r.mu.Unlock()
+	return mesh.ErrUnavailable
+}
+func (r *cleanupRuntime) Health(ctx context.Context) (mesh.Health, error) {
+	r.mu.Lock()
+	if r.cleanupHealth != nil {
+		health := *r.cleanupHealth
+		err := r.probeError
+		r.mu.Unlock()
+		if err != nil {
+			return mesh.Health{}, err
+		}
+		return health, nil
+	}
+	r.mu.Unlock()
+	return r.Runtime.Health(ctx)
+}
+func (r *cleanupRuntime) Stop(ctx context.Context) error {
+	r.mu.Lock()
+	err := r.stopError
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := r.Runtime.Stop(ctx); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.cleanupHealth = &mesh.Health{State: mesh.StateUnhealthy}
+	r.mu.Unlock()
+	return nil
+}
+func TestUnconfirmedRuntimeCleanupRetainsActivity(t *testing.T) {
+	for _, probeFails := range []bool{false, true} {
+		for _, cleanupByStop := range []bool{false, true} {
+			name := fmt.Sprintf("health_error=%v/cleanup_by_stop=%v", probeFails, cleanupByStop)
+			t.Run(name, func(t *testing.T) {
+				rt := fakeruntime.New()
+				s := ready(t, rt)
+				r := &cleanupRuntime{Runtime: rt, stopError: mesh.ErrUnavailable, entered: make(chan struct{}, 1), release: make(chan struct{})}
+				if probeFails {
+					r.probeError = mesh.ErrUnavailable
+				}
+				s.rt = r
+				out := &stream{ctx: context.Background()}
+				done := make(chan error, 1)
+				go func() { done <- generate(t, s, request(), out) }()
+				signalWait(t, r.entered)
+				if _, err := s.refreshHealth(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				close(r.release)
+				if code := status.Code(resultWait(t, done)); code != codes.Unavailable {
+					t.Errorf("generation code=%v", code)
+				}
+				for _, event := range out.events {
+					if event.GetCompleted() != nil {
+						t.Error("unconfirmed cleanup sent Completed")
+					}
+				}
+				assertRetained := func(phase string) {
+					t.Helper()
+					health, err := s.Health(context.Background(), &meshv1.HealthRequest{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if health.Report.RuntimeState != meshv1.RuntimeState_RUNTIME_STATE_UNHEALTHY || !health.Report.Active || health.Report.GetActiveRequestId() != request().RequestId {
+						t.Errorf("%s lost runtime ownership: %v", phase, health.Report)
+					}
+				}
+				assertRetained("handler return")
+				if code := status.Code(generate(t, s, request(), &stream{ctx: context.Background()})); code != codes.ResourceExhausted {
+					t.Errorf("unconfirmed runtime activity freed local slot: %v", code)
+				}
+				if err := s.stopRuntime(); !errors.Is(err, mesh.ErrUnavailable) {
+					t.Errorf("failed Stop=%v", err)
+				}
+				assertRetained("failed Stop")
+				if cleanupByStop {
+					r.mu.Lock()
+					r.stopError = nil
+					r.mu.Unlock()
+					if err := s.stopRuntime(); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					r.mu.Lock()
+					r.probeError = nil
+					r.cleanupHealth.Active = false
+					r.mu.Unlock()
+					if _, err := s.refreshHealth(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if report := s.Report(); report.Active || report.ActiveRequestId != nil {
+					t.Errorf("confirmed cleanup retained ownership: %v", report)
+				}
+			})
+		}
+	}
+}
+
+type validationRuntime struct {
+	*fakeruntime.Runtime
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *validationRuntime) Generate(ctx context.Context, req mesh.Request, emit func(mesh.Event) error) error {
+	r.entered <- struct{}{}
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return r.Runtime.Generate(ctx, req, emit)
+}
+func TestIdleHealthCannotClearActiveHandler(t *testing.T) {
+	rt := fakeruntime.New()
+	s := ready(t, rt)
+	r := &validationRuntime{Runtime: rt, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	s.rt = r
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- generate(t, s, request(), &stream{ctx: ctx}) }()
+	signalWait(t, r.entered)
+	health, err := s.refreshHealth(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.Active {
+		t.Fatal("fixture runtime should still be idle during handler-owned validation")
+	}
+	if report := s.Report(); !report.Active || report.GetActiveRequestId() != request().RequestId {
+		t.Errorf("idle health released active handler: %v", report)
+	}
+	overlap, cancelOverlap := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelOverlap()
+	if code := status.Code(generate(t, s, request(), &stream{ctx: overlap})); code != codes.ResourceExhausted {
+		t.Errorf("overlap during validation=%v", code)
+	}
+	close(r.release)
+	if err := resultWait(t, done); err != nil {
+		t.Fatal(err)
+	}
+	if report := s.Report(); report.Active || report.ActiveRequestId != nil {
+		t.Errorf("completed handler remained active: %v", report)
+	}
 }

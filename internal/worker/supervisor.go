@@ -128,7 +128,15 @@ func (s *Service) stopRuntime() error {
 	}
 	stop, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelStop()
-	return errors.Join(waitErr, s.rt.Stop(stop))
+	stopErr := s.rt.Stop(stop)
+	if stopErr == nil {
+		s.mu.Lock()
+		s.runtimeActive = false
+		s.updateActivityLocked()
+		s.revision++
+		s.mu.Unlock()
+	}
+	return errors.Join(waitErr, stopErr)
 }
 
 // A zero delay parks a permanently unhealthy worker until shutdown.
