@@ -21,6 +21,7 @@ filegroup(
         "//cmd/mica-mesh:format_srcs",
         "//internal/cli:format_srcs",
         "//internal/config:format_srcs",
+        "//internal/controller:format_srcs",
         "//internal/protocol:format_srcs",
         "//internal/runtime:format_srcs",
         "//internal/runtime/llamacpp:format_srcs",
