@@ -234,3 +234,54 @@ func TestDiscoveryStillRequiresReverseWorkerConnectivity(t *testing.T) {
 		t.Fatalf("status=%v error=%v", state, err)
 	}
 }
+
+func TestBrowseInterfacesFilterIPv4LANs(t *testing.T) {
+	const eligible = net.FlagUp | net.FlagMulticast
+	tests := []struct {
+		name  string
+		ip    string
+		flags net.Flags
+		want  bool
+	}{
+		{"LAN", "192.0.2.1", eligible, true},
+		{"link-local", "169.254.1.2", eligible, true},
+		{"down", "192.0.2.1", net.FlagMulticast, false},
+		{"no-multicast", "192.0.2.1", net.FlagUp, false},
+		{"loopback-interface", "192.0.2.1", eligible | net.FlagLoopback, false},
+		{"loopback-address", "127.0.0.1", eligible, false},
+		{"IPv6-only", "fe80::1", eligible, false},
+		{"unspecified", "0.0.0.0", eligible, false},
+		{"without-address", "", eligible, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := browseInterfaces([]localAddress{{ip: net.ParseIP(test.ip), iface: net.Interface{Index: 7, Flags: test.flags}}})
+			if test.want {
+				if err != nil || len(got) != 1 || got[0].Index != 7 {
+					t.Fatalf("interfaces=%v error=%v", got, err)
+				}
+			} else if err == nil || len(got) != 0 || !strings.Contains(err.Error(), "--controller-address") {
+				t.Fatalf("ineligible interface accepted or missing fallback: interfaces=%v error=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestBrowseInterfacesDeduplicateAndKeepAllLANs(t *testing.T) {
+	first := net.Interface{Index: 7, Flags: net.FlagUp | net.FlagMulticast}
+	second := net.Interface{Index: 9, Flags: net.FlagUp | net.FlagMulticast}
+	got, err := browseInterfaces([]localAddress{
+		{ip: net.ParseIP("192.0.2.1"), iface: first},
+		{ip: net.ParseIP("192.0.2.2"), iface: first},
+		{ip: net.ParseIP("198.51.100.1"), iface: second},
+	})
+	if err != nil || len(got) != 2 || got[0].Index != first.Index || got[1].Index != second.Index {
+		t.Fatalf("interfaces=%v error=%v", got, err)
+	}
+}
+
+func TestNoBrowseInterfacesReportsFallback(t *testing.T) {
+	if got, err := browseInterfaces(nil); err == nil || len(got) != 0 || !strings.Contains(err.Error(), "--controller-address") {
+		t.Fatalf("empty selection could reactivate upstream defaults: interfaces=%v error=%v", got, err)
+	}
+}

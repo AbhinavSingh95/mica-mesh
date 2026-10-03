@@ -16,10 +16,19 @@ const service = "_mica-mesh._tcp"
 const domain = "local."
 
 func browseMDNS(ctx context.Context, emit func(ControllerInfo)) error {
+	addresses, err := localAddresses()
+	if err != nil {
+		return err
+	}
+	interfaces, err := browseInterfaces(addresses)
+	if err != nil {
+		return err
+	}
+
 	entries := make(chan *zeroconf.ServiceEntry)
 	done := make(chan error, 1)
 	go func() {
-		done <- zeroconf.Browse(ctx, service, domain, entries, zeroconf.SelectIPTraffic(zeroconf.IPv4))
+		done <- zeroconf.Browse(ctx, service, domain, entries, zeroconf.SelectIPTraffic(zeroconf.IPv4), zeroconf.SelectIfaces(interfaces))
 	}()
 	// Browse does not close entries when socket construction fails. The completion
 	// channel covers both initialization failure and joined cancellation.
@@ -112,4 +121,23 @@ func stopAdvertisement(ctx context.Context, stop func()) func() {
 		}
 		<-done
 	}
+}
+
+// Browse every eligible IPv4 LAN, excluding interfaces that cannot send the
+// selected address family. An empty SelectIfaces would restore library defaults.
+func browseInterfaces(addresses []localAddress) ([]net.Interface, error) {
+	var interfaces []net.Interface
+	seen := make(map[int]bool)
+	for _, address := range addresses {
+		iface := address.iface
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagMulticast == 0 || iface.Flags&net.FlagLoopback != 0 || !remoteIPv4(address.ip) || seen[iface.Index] {
+			continue
+		}
+		seen[iface.Index] = true
+		interfaces = append(interfaces, iface)
+	}
+	if len(interfaces) == 0 {
+		return nil, fmt.Errorf("no eligible LAN IPv4 multicast interface; use --controller-address HOST:PORT")
+	}
+	return interfaces, nil
 }
