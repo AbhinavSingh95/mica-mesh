@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "mesh_test",
+    size = "medium",
+    srcs = ["mesh_test.go"],
+    deps = [
+        "//internal/controller",
+        "//internal/protocol",
+        "//internal/runtime",
+        "//internal/testutil/fakeruntime",
+        "//internal/worker",
+        "//protocol/mesh/v1:mesh",
+        "@com_github_google_uuid//:uuid",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//status",
+    ],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

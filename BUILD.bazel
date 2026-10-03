@@ -33,6 +33,7 @@ filegroup(
         "//internal/testutil/fakeruntime:format_srcs",
         "//internal/worker:format_srcs",
         "//protocol/mesh/v1:format_srcs",
+        "//tests/integration:format_srcs",
         "//third_party/patches:format_srcs",
     ],
 )

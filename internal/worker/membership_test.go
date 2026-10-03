@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/AbhinavSingh95/mica-mesh/internal/protocol"
 	mesh "github.com/AbhinavSingh95/mica-mesh/internal/runtime"
 	"github.com/AbhinavSingh95/mica-mesh/internal/testutil/fakeruntime"
 	meshv1 "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1"
@@ -65,7 +66,7 @@ func controllerServer(t *testing.T, c *controlServer) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := grpc.NewServer()
+	server := grpc.NewServer(protocol.GenerationServerOption(), grpc.MaxRecvMsgSize(protocol.GenerationMessageBytes), grpc.MaxSendMsgSize(protocol.StatusMessageBytes))
 	meshv1.RegisterControllerServiceServer(server, c)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
@@ -185,6 +186,57 @@ func TestUnknownWorkerReregisters(t *testing.T) {
 	second := registration(t, c)
 	if first.WorkerId != second.WorkerId || first.Endpoint != second.Endpoint {
 		t.Fatal("identity changed after registry loss")
+	}
+}
+
+func TestRuntimeVersionRefreshesAfterLoading(t *testing.T) {
+	rt := fakeruntime.New()
+	start := make(chan struct{})
+	rt.StartGate = start
+	s := New(workerID, config(), &meshv1.HardwareInfo{Hostname: "host"}, rt)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.RunRuntime(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := resultWait(t, done); err != nil {
+			t.Error(err)
+		}
+	})
+	signalWait(t, rt.Started)
+	c := control()
+	r := member(t, s, c)
+	first := registration(t, c)
+	if first.RuntimeVersion != "unknown" {
+		t.Fatalf("loading version=%q", first.RuntimeVersion)
+	}
+	close(start)
+	// Start publishes its verified capabilities before readiness; its owner is
+	// allowed to finish asynchronously without a guessed pre-start version.
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for rt.Capabilities().RuntimeVersion == "" {
+		select {
+		case <-ticker.C:
+		case <-deadline:
+			t.Fatal("startup did not publish capabilities")
+		}
+	}
+	tick(t, r, 2*time.Second)
+	updated := registration(t, c)
+	if updated.RuntimeVersion != "fake" || updated.WorkerId != first.WorkerId || updated.Endpoint != first.Endpoint {
+		t.Fatalf("metadata refresh=%v", updated)
+	}
+	tick(t, r, 2*time.Second)
+	heartbeat(t, c)
+	select {
+	case extra := <-c.registered:
+		t.Fatalf("unchanged capabilities registered again: %v", extra)
+	default:
+	}
+	if rt.Counters().Starts != 1 {
+		t.Fatal("metadata refresh restarted runtime")
 	}
 }
 func TestRegistrationRetryUsesSameProcessID(t *testing.T) {

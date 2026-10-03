@@ -29,6 +29,16 @@ func RunMembership(ctx context.Context, svc *Service, endpoint string, resolve f
 	return runMembership(ctx, svc, endpoint, resolve, membershipTiming{wait: wait, jitter: func(d time.Duration) time.Duration { return membershipJitter(d, rand.Int64N) }})
 }
 func runMembership(ctx context.Context, svc *Service, endpoint string, resolve func(context.Context) (string, error), timing membershipTiming) error {
+	// The adapter verifies its version during Start, independently of membership.
+	// Refresh only changed metadata through idempotent registration, preserving
+	// this process identity and any controller-owned reservation.
+	runtimeVersion := func() string {
+		version := svc.rt.Capabilities().RuntimeVersion
+		if version == "" {
+			return "unknown"
+		}
+		return version
+	}
 	var conn *grpc.ClientConn
 	var address string
 	defer func() {
@@ -65,11 +75,7 @@ func runMembership(ctx context.Context, svc *Service, endpoint string, resolve f
 			client := meshv1.NewControllerServiceClient(conn)
 			for ctx.Err() == nil {
 				rpc, cancel := context.WithTimeout(ctx, 2*time.Second)
-				caps := svc.rt.Capabilities()
-				version := caps.RuntimeVersion
-				if version == "" {
-					version = "unknown"
-				}
+				version := runtimeVersion()
 				response, registerErr := client.RegisterWorker(rpc, &meshv1.RegisterWorkerRequest{WorkerId: svc.id, Endpoint: endpoint, ProtocolMajor: protocol.Major, Hardware: svc.hardware, RuntimeVersion: version, Backend: svc.cfg.Backend, Model: &meshv1.ModelDescriptor{Id: svc.cfg.Model.ID, Sha256: svc.cfg.Model.SHA256, ContextTokens: uint32(svc.cfg.Model.ContextTokens)}, Capacity: 1, Report: svc.Report()})
 				cancel()
 				if registerErr != nil {
@@ -85,6 +91,10 @@ func runMembership(ctx context.Context, svc *Service, endpoint string, resolve f
 					if timing.wait(ctx, 2*time.Second) != nil {
 						return nil
 					}
+					if runtimeVersion() != version {
+						err = nil
+						break
+					}
 					rpc, cancel := context.WithTimeout(ctx, 2*time.Second)
 					_, err = client.Heartbeat(rpc, &meshv1.HeartbeatRequest{WorkerId: svc.id, Report: svc.Report()})
 					cancel()
@@ -92,7 +102,7 @@ func runMembership(ctx context.Context, svc *Service, endpoint string, resolve f
 						break
 					}
 				}
-				if status.Code(err) == codes.NotFound {
+				if err == nil || status.Code(err) == codes.NotFound {
 					continue
 				}
 				break
