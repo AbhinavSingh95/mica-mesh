@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_binary(
     name = "mica-mesh",
@@ -14,8 +14,51 @@ filegroup(
 
 go_library(
     name = "mica-mesh_lib",
-    srcs = ["main.go"],
+    srcs = [
+        "main.go",
+        "output_unix.go",
+    ],
     importpath = "github.com/AbhinavSingh95/mica-mesh/cmd/mica-mesh",
     visibility = ["//visibility:private"],
-    deps = ["//internal/cli"],
+    deps = [
+        "//internal/cli",
+    ] + select({
+        "@rules_go//go/platform:android": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:darwin": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:ios": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:linux": [
+            "@org_golang_x_sys//unix",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+go_test(
+    name = "mica-mesh_test",
+    srcs = [
+        "main_test.go",
+        "output_test.go",
+    ],
+    data = [
+        ":mica-mesh",
+        "//internal/runtime/llamacpp/testserver",
+    ],
+    embed = [":mica-mesh_lib"],
+    env = {"MICA_TEST_SERVER": "$(rlocationpath //internal/runtime/llamacpp/testserver)"},
+    deps = [
+        "//internal/protocol",
+        "//protocol/mesh/v1:mesh",
+        "@com_github_google_uuid//:uuid",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_x_sys//unix",
+        "@rules_go//go/runfiles",
+    ],
 )

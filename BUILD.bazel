@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "nogo")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 # gazelle:prefix github.com/AbhinavSingh95/mica-mesh
+# gazelle:exclude .superpowers
 
 gazelle(name = "gazelle")
 
@@ -19,9 +20,11 @@ filegroup(
         "BUILD.bazel",
         "MODULE.bazel",
         "//cmd/mica-mesh:format_srcs",
+        "//internal/app:format_srcs",
         "//internal/cli:format_srcs",
         "//internal/config:format_srcs",
         "//internal/controller:format_srcs",
+        "//internal/hardware:format_srcs",
         "//internal/protocol:format_srcs",
         "//internal/runtime:format_srcs",
         "//internal/runtime/llamacpp:format_srcs",

@@ -4,7 +4,11 @@ go_binary(
     name = "testserver",
     testonly = True,
     embed = [":testserver_lib"],
-    visibility = ["//internal/runtime/llamacpp:__pkg__"],
+    visibility = [
+        "//cmd/mica-mesh:__pkg__",
+        "//internal/app:__pkg__",
+        "//internal/runtime/llamacpp:__pkg__",
+    ],
 )
 
 filegroup(
