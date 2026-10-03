@@ -4,3 +4,4 @@
 /runtime/
 /.local/
 .DS_Store
+docs/*
