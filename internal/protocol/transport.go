@@ -8,6 +8,17 @@ import (
 	"google.golang.org/grpc/tap"
 )
 
+// GenerationMessageBytes bounds each generation message and ordinary control
+// RPCs (registration, heartbeat and Health). It leaves room for a 16KiB prompt.
+const GenerationMessageBytes = 64 * 1024
+
+// StatusMessageBytes bounds GetClusterStatus responses, which contain many rows.
+// Servers use this send limit and GenerationMessageBytes as their receive limit;
+// clients set per-call generation/control receive limits to GenerationMessageBytes
+// and only GetClusterStatus uses StatusMessageBytes. Generation handlers still
+// enforce their strict 4KiB text and small identity/completion event contracts.
+const StatusMessageBytes = 1024 * 1024
+
 type generationCancelKey struct{}
 
 // GenerationServerOption installs the generation lifetime BEFORE gRPC captures
