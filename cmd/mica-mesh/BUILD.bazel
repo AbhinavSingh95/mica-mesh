@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_binary(
+    name = "mica-mesh",
+    embed = [":mica-mesh_lib"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)
+
+go_library(
+    name = "mica-mesh_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/cmd/mica-mesh",
+    visibility = ["//visibility:private"],
+    deps = ["//internal/cli"],
+)

@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cli",
+    srcs = ["cli.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/cli",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "cli_test",
+    size = "small",
+    srcs = ["cli_test.go"],
+    deps = [":cli"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)
