@@ -1,0 +1,139 @@
+syntax = "proto3";
+
+package mica.mesh.v1;
+
+option go_package = "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1;meshv1";
+
+// Field numbers and names are stable. Reserve removed numbers and names; never reuse them.
+service ControllerService {
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc GetClusterStatus(GetClusterStatusRequest) returns (GetClusterStatusResponse);
+  rpc RunInference(InferenceRequest) returns (stream InferenceEvent);
+}
+service WorkerService {
+  rpc Generate(InferenceRequest) returns (stream InferenceEvent);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Unspecified and unknown numeric enum values never establish readiness.
+// Receivers reject them in reports; clients treat unknown status values as unavailable.
+enum RuntimeState {
+  RUNTIME_STATE_UNSPECIFIED = 0;
+  RUNTIME_STATE_STARTING = 1;
+  RUNTIME_STATE_READY = 2;
+  RUNTIME_STATE_UNHEALTHY = 3;
+}
+enum WorkerState {
+  WORKER_STATE_UNSPECIFIED = 0;
+  WORKER_STATE_STARTING = 1;
+  WORKER_STATE_READY = 2;
+  WORKER_STATE_BUSY = 3;
+  WORKER_STATE_UNHEALTHY = 4;
+  WORKER_STATE_UNAVAILABLE = 5;
+}
+
+message ModelDescriptor {
+  string id = 1;
+  string sha256 = 2;
+  uint32 context_tokens = 3;
+}
+// Absent hardware values mean unknown, including memory quantities. Unified RAM
+// is not added to dedicated VRAM; gpu_memory_bytes describes dedicated memory only.
+message HardwareInfo {
+  string hostname = 1;
+  string architecture = 2;
+  optional string cpu = 3;
+  optional uint32 cpu_cores = 4;
+  optional uint64 ram_bytes = 5;
+  optional string gpu = 6;
+  optional uint64 gpu_memory_bytes = 7;
+  optional bool unified_memory = 8;
+}
+// Activity includes admission, generation, and cancellation cleanup. An active
+// request ID is absent while idle, and is diagnostic rather than a deduplication key.
+message WorkerReport {
+  RuntimeState runtime_state = 1;
+  bool active = 2;
+  optional string active_request_id = 3;
+  string last_error = 4;
+}
+message RegisterWorkerRequest {
+  string worker_id = 1;
+  string endpoint = 2;
+  uint32 protocol_major = 3;
+  HardwareInfo hardware = 4;
+  string runtime_version = 5;
+  string backend = 6;
+  ModelDescriptor model = 7;
+  uint32 capacity = 8;
+  WorkerReport report = 9;
+}
+message RegisterWorkerResponse {
+  string controller_id = 1;
+  uint32 heartbeat_interval_seconds = 2;
+  uint32 membership_expiry_seconds = 3;
+}
+message HeartbeatRequest {
+  string worker_id = 1;
+  WorkerReport report = 2;
+}
+message HeartbeatResponse {}
+message GetClusterStatusRequest {}
+message GetClusterStatusResponse {
+  string controller_id = 1;
+  repeated WorkerInfo workers = 2;
+}
+// A controller-owned snapshot. Heartbeat age is measured from receipt time,
+// never from a worker-supplied timestamp. Reported activity and reservation differ.
+message WorkerInfo {
+  string worker_id = 1;
+  string endpoint = 2;
+  uint32 protocol_major = 3;
+  HardwareInfo hardware = 4;
+  string runtime_version = 5;
+  string backend = 6;
+  ModelDescriptor model = 7;
+  uint32 capacity = 8;
+  WorkerReport report = 9;
+  WorkerState state = 10;
+  uint64 heartbeat_age_milliseconds = 11;
+  optional string reserved_request_id = 12;
+  string last_error = 13;
+}
+message HealthRequest {}
+message HealthResponse {
+  string worker_id = 1;
+  WorkerReport report = 2;
+}
+message InferenceRequest {
+  string request_id = 1;
+  string model_id = 2;
+  string prompt = 3;
+  int32 max_output_tokens = 4;
+}
+// A successful stream has Started, TextDelta*, Completed, then final gRPC OK.
+// Failures omit Completed and end non-OK. Completed alone does not prove success.
+// Receivers reject absent/unknown payloads and malformed ordering. Emit is
+// synchronous: downstream backpressure applies through worker and controller.
+message InferenceEvent {
+  oneof payload {
+    Started started = 1;
+    TextDelta text_delta = 2;
+    Completed completed = 3;
+  }
+}
+message Started {
+  string request_id = 1;
+  string worker_id = 2;
+  string worker_hostname = 3;
+  string model_id = 4;
+}
+// Valid UTF-8, at most 4 KiB; boundaries need not correspond to model tokens.
+message TextDelta { string text = 1; }
+message Completed {
+  // Only "stop" and "length" are supported in v1.
+  string finish_reason = 1;
+  optional int64 input_tokens = 2;
+  optional int64 output_tokens = 3;
+}

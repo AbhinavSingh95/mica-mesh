@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "protocol",
+    srcs = ["validate.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/protocol",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//protocol/mesh/v1:mesh",
+        "@com_github_google_uuid//:uuid",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+    ],
+)
+
+go_test(
+    name = "protocol_test",
+    size = "small",
+    srcs = ["validate_test.go"],
+    deps = [
+        ":protocol",
+        "//protocol/mesh/v1:mesh",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+    ],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

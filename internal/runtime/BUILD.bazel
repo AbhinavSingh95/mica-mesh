@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "runtime",
+    srcs = ["runtime.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/runtime",
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

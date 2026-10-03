@@ -20,7 +20,10 @@ filegroup(
         "MODULE.bazel",
         "//cmd/mica-mesh:format_srcs",
         "//internal/cli:format_srcs",
-        "//tools/toolchain:format_srcs",
+        "//internal/config:format_srcs",
+        "//internal/protocol:format_srcs",
+        "//internal/runtime:format_srcs",
+        "//protocol/mesh/v1:format_srcs",
     ],
 )
 
