@@ -23,6 +23,9 @@ filegroup(
         "//internal/config:format_srcs",
         "//internal/protocol:format_srcs",
         "//internal/runtime:format_srcs",
+        "//internal/runtime/llamacpp:format_srcs",
+        "//internal/runtime/llamacpp/testserver:format_srcs",
+        "//internal/testutil/fakeruntime:format_srcs",
         "//protocol/mesh/v1:format_srcs",
     ],
 )

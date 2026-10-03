@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "llamacpp",
+    srcs = ["process.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/runtime/llamacpp",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/runtime"],
+)
+
+go_test(
+    name = "llamacpp_test",
+    srcs = ["process_test.go"],
+    data = ["//internal/runtime/llamacpp/testserver"],
+    embed = [":llamacpp"],
+    env = {"MICA_TEST_SERVER": "$(rlocationpath //internal/runtime/llamacpp/testserver)"},
+    deps = [
+        "//internal/runtime",
+    ],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)
