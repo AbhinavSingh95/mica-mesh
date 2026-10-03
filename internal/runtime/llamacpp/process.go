@@ -281,9 +281,10 @@ func runtimeEnvironment() []string {
 	}
 	return filtered
 }
+
+// Executable checks share the startup deadline, including any earlier caller
+// deadline. The one-second control budget applies only to runtime HTTP calls.
 func (r *Runtime) runCheck(ctx context.Context, binary, flag string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, controlBudget)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, flag)
 	cmd.Env = runtimeEnvironment()
 	cmd.WaitDelay = time.Second
@@ -292,7 +293,7 @@ func (r *Runtime) runCheck(ctx context.Context, binary, flag string) (string, er
 	cmd.Stderr = output
 	err := cmd.Run()
 	if ctx.Err() != nil {
-		return "", ctx.Err()
+		return "", fmt.Errorf("runtime %s check: %w", flag, ctx.Err())
 	}
 	if err != nil {
 		return "", fmt.Errorf("runtime %s check failed: %w: %v", flag, mesh.ErrInvalidInput, err)

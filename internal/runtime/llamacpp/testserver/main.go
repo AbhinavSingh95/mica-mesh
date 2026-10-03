@@ -20,6 +20,16 @@ import (
 func main() {
 	client := &http.Client{Timeout: 15 * time.Second}
 	control := os.Getenv("MICA_TEST_CONTROL")
+	if len(os.Args) == 2 && os.Args[1] == os.Getenv("MICA_TEST_CHECK_GATE") {
+		body, _ := json.Marshal(os.Getpid())
+		resp, err := client.Post(control+"/check", "application/json", bytes.NewReader(body))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		version := "version: 0.5.0 (build 1, commit 7fe450e)"
 		if os.Getenv("MICA_TEST_VERSION") != "" {

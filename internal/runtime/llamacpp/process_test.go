@@ -38,6 +38,8 @@ type fixture struct {
 	warmupGate                 chan struct{}
 	warmupStatus               int
 	server                     *httptest.Server
+	checkEntered               chan int
+	checkRelease, checkExited  chan struct{}
 	generateHandler            func(http.ResponseWriter, *http.Request)
 	tokenHandler               func(http.ResponseWriter, *http.Request)
 	templateHandler            func(http.ResponseWriter, *http.Request)
@@ -74,8 +76,23 @@ func setup(t *testing.T) *fixture {
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
 	f := &fixture{cfg: mesh.Config{BinaryPath: binary, ModelPath: model, Backend: "cpu", Port: port, Model: mesh.Model{ID: "test-model", SHA256: hex.EncodeToString(sum[:]), ContextTokens: 2048}}, launched: make(chan launch, 1), healthCalled: make(chan struct{}, 32), warmupCalled: make(chan struct{}, 1), warmupStatus: 200, tokenCount: 10}
+	f.checkEntered = make(chan int, 1)
+	f.checkRelease = make(chan struct{})
+	f.checkExited = make(chan struct{})
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
+		case "/check":
+			defer close(f.checkExited)
+			var pid int
+			if err := json.NewDecoder(req.Body).Decode(&pid); err != nil {
+				t.Error(err)
+				return
+			}
+			f.checkEntered <- pid
+			select {
+			case <-f.checkRelease:
+			case <-req.Context().Done():
+			}
 		case "/termination":
 			if f.terminated != nil {
 				select {
@@ -181,7 +198,7 @@ func setup(t *testing.T) *fixture {
 		}
 	}))
 	// Keep race instrumentation; remove its artificial one-second exit delay
-	// only in child processes so the version check has the same timing contract.
+	// only in child processes to avoid adding a delay unrelated to their work.
 	t.Setenv("GORACE", os.Getenv("GORACE")+" atexit_sleep_ms=0")
 	t.Setenv("MICA_TEST_CONTROL", f.server.URL)
 	t.Cleanup(f.server.Close)
@@ -592,6 +609,94 @@ func TestNonregularModelRejectedBeforeOpen(t *testing.T) {
 			select {
 			case <-f.launched:
 				t.Error("nonregular model launched a runtime child")
+			default:
+			}
+		})
+	}
+}
+
+func TestStartupChecksUseStartupBudget(t *testing.T) {
+	for _, flag := range []string{"--version", "--list-devices"} {
+		t.Run(flag, func(t *testing.T) {
+			f := setup(t)
+			if flag == "--list-devices" {
+				f.cfg.Backend = "metal"
+			}
+			t.Setenv("MICA_TEST_CHECK_GATE", flag)
+			r := New()
+			ctx, cancel := context.WithCancel(bound(t))
+			done := make(chan error, 1)
+			joined := make(chan struct{})
+			go func() { defer close(joined); done <- r.Start(ctx, f.cfg) }()
+			defer func() {
+				cancel()
+				receive(t, joined)
+				if err := r.Stop(context.Background()); err != nil {
+					t.Error(err)
+				}
+			}()
+			select {
+			case <-f.checkEntered:
+			case err := <-done:
+				t.Fatalf("startup never entered check: %v", err)
+			}
+			// Intentionally cross the HTTP control budget: executable checks
+			// have the existing startup deadline, not the HTTP call deadline.
+			timer := time.NewTimer(1100 * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case err := <-done:
+				t.Fatalf("startup check ended before release: %v", err)
+			case <-timer.C:
+			}
+			close(f.checkRelease)
+			if err := receive(t, done); err != nil {
+				t.Fatal(err)
+			}
+			ready(t, r)
+		})
+	}
+}
+
+func TestStartupCheckPreservesCallerCancellation(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deadline=%t", deadline), func(t *testing.T) {
+			f := setup(t)
+			t.Setenv("MICA_TEST_CHECK_GATE", "--version")
+			ctx, cancel := context.WithCancel(bound(t))
+			if deadline {
+				cancel()
+				ctx, cancel = context.WithTimeout(bound(t), 2*time.Second)
+			}
+			done := make(chan error, 1)
+			joined := make(chan struct{})
+			r := New()
+			go func() { defer close(joined); done <- r.Start(ctx, f.cfg) }()
+			defer func() { cancel(); receive(t, joined) }()
+			var pid int
+			select {
+			case pid = <-f.checkEntered:
+			case err := <-done:
+				t.Fatalf("startup never entered check: %v", err)
+			}
+			want := context.Canceled
+			if deadline {
+				want = context.DeadlineExceeded
+			} else {
+				cancel()
+			}
+			err := receive(t, done)
+			if !errors.Is(err, want) || !errors.Is(ctx.Err(), want) {
+				t.Fatalf("startup cancellation = %v, caller = %v; want %v", err, ctx.Err(), want)
+			}
+			if !strings.Contains(err.Error(), "--version") {
+				t.Errorf("startup failure lacks check context: %v", err)
+			}
+			receive(t, f.checkExited)
+			assertExited(t, pid)
+			select {
+			case l := <-f.launched:
+				t.Fatalf("launched runtime after canceled check: %+v", l)
 			default:
 			}
 		})
