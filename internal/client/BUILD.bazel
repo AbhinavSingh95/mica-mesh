@@ -1,41 +1,26 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "cli",
-    srcs = [
-        "cli.go",
-        "command.go",
-        "doctor.go",
-        "setup.go",
-    ],
-    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/cli",
+    name = "client",
+    srcs = ["client.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/client",
     visibility = ["//:__subpackages__"],
     deps = [
-        "//internal/app",
-        "//internal/client",
-        "//internal/config",
-        "//internal/discovery",
-        "//internal/doctor",
         "//internal/protocol",
-        "//internal/setup",
         "//protocol/mesh/v1:mesh",
         "@com_github_google_uuid//:uuid",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
     ],
 )
 
 go_test(
-    name = "cli_test",
+    name = "client_test",
     size = "small",
-    srcs = [
-        "cli_test.go",
-        "command_test.go",
-        "setup_test.go",
-    ],
-    embed = [":cli"],
+    srcs = ["client_test.go"],
+    embed = [":client"],
     deps = [
-        "//internal/config",
         "//internal/protocol",
-        "//internal/setup",
         "//protocol/mesh/v1:mesh",
         "@com_github_google_uuid//:uuid",
         "@org_golang_google_grpc//:grpc",

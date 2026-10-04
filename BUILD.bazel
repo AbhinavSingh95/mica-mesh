@@ -22,6 +22,7 @@ filegroup(
         "//cmd/mica-mesh:format_srcs",
         "//internal/app:format_srcs",
         "//internal/cli:format_srcs",
+        "//internal/client:format_srcs",
         "//internal/config:format_srcs",
         "//internal/controller:format_srcs",
         "//internal/discovery:format_srcs",

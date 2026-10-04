@@ -135,6 +135,47 @@ func TestRunSeparatesTextAndDiagnostics(t *testing.T) {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, out, diag)
 	}
 }
+func TestRunTimingIncludesResolution(t *testing.T) {
+	address := serve(t, &streamController{events: func(req *meshv1.InferenceRequest) []*meshv1.InferenceEvent {
+		return []*meshv1.InferenceEvent{started(req), delta("text"), completed()}
+	}})
+	cfg := config.Default()
+	cfg.Timeout = time.Second
+	var out, diag bytes.Buffer
+	var resolutionTime time.Duration
+	err := runInference(context.Background(), cfg, "hello", &out, &diag, func(ctx context.Context) (string, error) {
+		begin := time.Now()
+		// Create a measured discovery cost, rather than timing scheduler work.
+		timer := time.NewTimer(25 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+		resolutionTime = time.Since(begin)
+		return address, nil
+	})
+	if err != nil || out.String() != "text" {
+		t.Fatalf("error=%v text=%q", err, out.String())
+	}
+	for _, key := range []string{"duration=", "time_to_first_text="} {
+		found := false
+		for _, field := range strings.Fields(diag.String()) {
+			if value, ok := strings.CutPrefix(field, key); ok {
+				elapsed, err := time.ParseDuration(value)
+				if err != nil || elapsed < resolutionTime {
+					t.Fatalf("%s%s omits discovery cost %s", key, value, resolutionTime)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s in %q", key, diag.String())
+		}
+	}
+}
+
 func TestPartialTextSurvivesFailure(t *testing.T) {
 	code, out, diag := invoke(t, &streamController{events: func(req *meshv1.InferenceRequest) []*meshv1.InferenceEvent {
 		return []*meshv1.InferenceEvent{started(req), delta("partial")}
@@ -147,7 +188,7 @@ func TestCompletedRequiresFinalOK(t *testing.T) {
 	code, _, diag := invoke(t, &streamController{events: func(req *meshv1.InferenceRequest) []*meshv1.InferenceEvent {
 		return []*meshv1.InferenceEvent{started(req), completed()}
 	}, final: status.Error(codes.Unavailable, "failed")})
-	if code == 0 || !strings.Contains(diag, "time_to_first_text=unknown") {
+	if code == 0 || !strings.Contains(diag, "time_to_first_text=unknown") || strings.Contains(diag, "finish_reason=") {
 		t.Fatalf("non-OK completion result=%d diagnostic=%q", code, diag)
 	}
 }

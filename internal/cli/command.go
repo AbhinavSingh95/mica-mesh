@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
-	"unicode/utf8"
 
+	"github.com/AbhinavSingh95/mica-mesh/internal/client"
 	"github.com/AbhinavSingh95/mica-mesh/internal/config"
 	"github.com/AbhinavSingh95/mica-mesh/internal/discovery"
 	"github.com/AbhinavSingh95/mica-mesh/internal/doctor"
@@ -19,8 +19,6 @@ import (
 	"github.com/AbhinavSingh95/mica-mesh/internal/setup"
 	meshv1 "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1"
 	"github.com/google/uuid"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type command struct {
@@ -201,9 +199,6 @@ func managedLayout(executable, home string) (setup.Layout, error) {
 func resolveController(address string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) { return discovery.Resolve(ctx, address) }
 }
-func connect(address string) (*grpc.ClientConn, error) {
-	return grpc.NewClient("passthrough:///"+address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(protocol.GenerationMessageBytes), grpc.MaxCallSendMsgSize(protocol.GenerationMessageBytes)))
-}
 
 func runInference(ctx context.Context, cfg config.Config, prompt string, stdout, stderr io.Writer, resolve func(context.Context) (string, error)) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
@@ -230,44 +225,20 @@ func runInference(ctx context.Context, cfg config.Config, prompt string, stdout,
 	if err != nil {
 		return err
 	}
-	conn, err := connect(target)
+	mesh, err := client.New(target)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, conn.Close()) }()
-	stream, err := meshv1.NewControllerServiceClient(conn).RunInference(ctx, req)
-	if err != nil {
-		return err
-	}
-	started, terminal := false, false
-	for {
-		event, recvErr := stream.Recv()
-		if recvErr == io.EOF {
-			if !terminal {
-				return errors.New("stream ended without Completed")
-			}
-			return nil
-		}
-		if recvErr != nil {
-			return recvErr
-		}
-		if event == nil || terminal {
-			return errors.New("malformed inference event order")
-		}
+	defer func() { err = errors.Join(err, mesh.Close()) }()
+	var finishReason string
+	if err := mesh.Generate(ctx, req, func(event *meshv1.InferenceEvent) error {
 		switch p := event.Payload.(type) {
 		case *meshv1.InferenceEvent_Started:
 			s := p.Started
-			if started || s == nil || s.RequestId != id || s.ModelId != cfg.Model || uuid.Validate(s.WorkerId) != nil || s.WorkerHostname == "" || !utf8.ValidString(s.WorkerHostname) || len(s.WorkerHostname) > 1024 {
-				return errors.New("malformed Started event")
-			}
-			started = true
 			if _, err := fmt.Fprintf(stderr, "request_id=%s worker_id=%s worker_hostname=%q\n", id, s.WorkerId, s.WorkerHostname); err != nil {
 				return fmt.Errorf("write diagnostics: %w", err)
 			}
 		case *meshv1.InferenceEvent_TextDelta:
-			if !started || p.TextDelta == nil || p.TextDelta.Text == "" || len(p.TextDelta.Text) > 4096 || !utf8.ValidString(p.TextDelta.Text) {
-				return errors.New("malformed TextDelta event")
-			}
 			text := p.TextDelta.Text
 			n, err := io.WriteString(stdout, text)
 			if err != nil {
@@ -280,18 +251,17 @@ func runInference(ctx context.Context, cfg config.Config, prompt string, stdout,
 				firstText = time.Since(begin).String()
 			}
 		case *meshv1.InferenceEvent_Completed:
-			c := p.Completed
-			if !started || c == nil || (c.FinishReason != "stop" && c.FinishReason != "length") || (c.InputTokens != nil && *c.InputTokens < 0) || (c.OutputTokens != nil && *c.OutputTokens < 0) {
-				return errors.New("malformed Completed event")
-			}
-			terminal = true
-			if _, err := fmt.Fprintf(stderr, "request_id=%s time_to_first_text=%s duration=%s finish_reason=%s\n", id, firstText, time.Since(begin), c.FinishReason); err != nil {
-				return fmt.Errorf("write completion diagnostics: %w", err)
-			}
-		default:
-			return errors.New("unknown inference event")
+			// Keep only the value needed after final transport success.
+			finishReason = p.Completed.FinishReason
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
+	if _, err := fmt.Fprintf(stderr, "request_id=%s time_to_first_text=%s duration=%s finish_reason=%s\n", id, firstText, time.Since(begin), finishReason); err != nil {
+		return fmt.Errorf("write completion diagnostics: %w", err)
+	}
+	return nil
 }
 
 // bindOutput gives each invocation exclusive write/deadline ownership of supplied
@@ -341,19 +311,16 @@ func clusterStatusWithResolver(ctx context.Context, stdout io.Writer, resolve fu
 	if err != nil {
 		return err
 	}
-	conn, err := connect(target)
+	mesh, err := client.New(target)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, conn.Close()) }()
+	defer func() { err = errors.Join(err, mesh.Close()) }()
 	rpc, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	response, err := meshv1.NewControllerServiceClient(conn).GetClusterStatus(rpc, &meshv1.GetClusterStatusRequest{}, grpc.MaxCallRecvMsgSize(protocol.StatusMessageBytes))
+	response, err := mesh.Status(rpc)
 	if err != nil {
 		return err
-	}
-	if response == nil || uuid.Validate(response.ControllerId) != nil {
-		return errors.New("malformed controller status identity")
 	}
 	if _, err := fmt.Fprintf(stdout, "controller_id=%s\n", response.ControllerId); err != nil {
 		return err
