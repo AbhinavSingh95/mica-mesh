@@ -7,16 +7,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/AbhinavSingh95/mica-mesh/internal/app"
 	"github.com/AbhinavSingh95/mica-mesh/internal/config"
 )
 
-// Main owns signal handling and returns a process exit status. Consent input must
+// Main returns a process exit status. The caller owns signals and supplies their
+// cancellation through ctx for the full descriptor lifetime. Consent input must
 // report terminal identity through IsTerminal and support read deadlines, or be
 // a prompt/cooperative test reader. Unread commands never inspect stdin. It never closes
 // supplied writers. Writers must cooperate with cancellation or return promptly;
@@ -29,8 +27,6 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		finalDiagnostic(ctx, stderr, "mica-mesh: %v\n", commonErr)
 		return 1
 	}
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	ctx, cancelInvocation := context.WithCancel(ctx)
 	defer cancelInvocation()
 	if len(args) == 0 || len(args) == 1 && help || len(args) > 0 && args[0] == "ui" && help {

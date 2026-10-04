@@ -20,6 +20,7 @@ go_library(
         "input_unix.go",
         "main.go",
         "output_unix.go",
+        "plain_unix.go",
     ],
     importpath = "github.com/AbhinavSingh95/mica-mesh/cmd/mica-mesh",
     visibility = ["//visibility:private"],
@@ -45,12 +46,18 @@ go_library(
 
 go_test(
     name = "mica-mesh_test",
+    size = "medium",
     srcs = [
         "consent_darwin_test.go",
         "guided_darwin_test.go",
         "input_test.go",
+        "lifetime_darwin_test.go",
         "main_test.go",
+        "managed_guided_darwin_test.go",
         "output_test.go",
+        "plain_signal_darwin_test.go",
+        "roles_darwin_test.go",
+        "screen_darwin_test.go",
     ],
     data = [
         ":mica-mesh",
@@ -69,10 +76,14 @@ go_test(
         "@rules_go//go/runfiles",
     ] + select({
         "@rules_go//go/platform:darwin": [
+            "//internal/cli",
             "//internal/setup",
+            "@land_charm_lipgloss_v2//:lipgloss",
         ],
         "@rules_go//go/platform:ios": [
+            "//internal/cli",
             "//internal/setup",
+            "@land_charm_lipgloss_v2//:lipgloss",
         ],
         "//conditions:default": [],
     }),

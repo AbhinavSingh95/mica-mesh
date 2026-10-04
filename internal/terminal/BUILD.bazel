@@ -46,9 +46,12 @@ go_test(
         "flow_test.go",
         "input_test.go",
         "library_test.go",
+        "lifetime_test.go",
         "model_test.go",
         "request_test.go",
+        "session_io_darwin_test.go",
         "session_test.go",
+        "two_worker_test.go",
     ],
     embed = [":terminal"],
     deps = [
@@ -69,6 +72,8 @@ go_test(
         "@land_charm_bubbletea_v2//:bubbletea",
         "@land_charm_lipgloss_v2//:lipgloss",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
     ] + select({
         "@rules_go//go/platform:darwin": [
             "@org_golang_x_sys//unix",

@@ -32,25 +32,20 @@ func entrypoint() int {
 		return code
 	}
 
-	input := captureInput(0)
-	outputs, err := ownOutputs(1, 2)
+	plain, err := openPlain(context.Background())
 	if err != nil {
 		reportOutputError(fmt.Errorf("initialize cancellable output: %w", err))
+		_ = plain.close() // Output setup has already restored its partial ownership.
 		return 1
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	restoreLogger, loggingFailed := ownLogger(outputs[1].file, cancel)
-	code := cli.Main(ctx, os.Args[1:], input, outputs[0].file, outputs[1].file)
+	restoreLogger, loggingFailed := ownLogger(plain.outputs[1].file, plain.cancel)
+	code := cli.Main(plain.ctx, os.Args[1:], plain.input, plain.outputs[0].file, plain.outputs[1].file)
 	restoreLogger()
 	if loggingFailed() {
 		code = 1
 	}
 	// Main has joined consent reads, callbacks, service work, and diagnostics.
-	if err := input.close(); err != nil {
-		code = 1
-	}
-	if err := closeOutputs(outputs); err != nil {
+	if err := plain.close(); err != nil {
 		code = 1
 	}
 	return code

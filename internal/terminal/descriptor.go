@@ -1,6 +1,9 @@
 package terminal
 
 import (
+	"context"
+	"errors"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -16,6 +19,7 @@ type terminalInput struct {
 	guard    inputGuard
 	mu       sync.Mutex
 	canceled bool
+	onEOF    context.CancelFunc // Set by Console before its reader starts.
 }
 
 func newTerminalInput(file *os.File, fd int, rejected func()) *terminalInput {
@@ -23,7 +27,15 @@ func newTerminalInput(file *os.File, fd int, rejected func()) *terminalInput {
 	r.guard = inputGuard{source: inputSource{r}, rejected: rejected, ambiguity: r.deadline}
 	return r
 }
-func (r *terminalInput) Read(p []byte) (int, error)  { return r.guard.Read(p) }
+func (r *terminalInput) Read(p []byte) (int, error) {
+	n, err := r.guard.Read(p)
+	// The terminal library treats EOF as a successful scanner stop. The
+	// Console still must cancel and join the role that no longer has input.
+	if errors.Is(err, io.EOF) && r.onEOF != nil {
+		r.onEOF()
+	}
+	return n, err
+}
 func (r *terminalInput) Write(p []byte) (int, error) { return r.file.Write(p) }
 func (r *terminalInput) Name() string                { return r.file.Name() }
 func (r *terminalInput) Fd() uintptr                 { return uintptr(r.fd) }

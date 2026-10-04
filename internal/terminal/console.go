@@ -166,6 +166,7 @@ type diagnosticsMsg struct{}
 func (c *Console) run(ctx context.Context, model tea.Model, owner func(context.Context, *tea.Program) error) error {
 	sessionCtx, cancelSession := context.WithCancel(ctx)
 	defer cancelSession()
+	c.input.onEOF = cancelSession
 	// Keep rendering alive during application cleanup after external cancellation.
 	// Each write remains bounded independently. Renderer failure cancels both owners.
 	programCtx, cancelProgram := context.WithCancel(context.WithoutCancel(ctx))

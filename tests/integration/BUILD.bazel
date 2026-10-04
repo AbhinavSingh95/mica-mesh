@@ -1,10 +1,18 @@
 load("@rules_go//go:def.bzl", "go_test")
 
+# Preserve the established mesh_test label and one execution of this suite.
+# Gazelle's package-derived name would add a duplicate integration_test rule.
+# gazelle:ignore
+
 go_test(
     name = "mesh_test",
     size = "medium",
-    srcs = ["mesh_test.go"],
+    srcs = [
+        "mesh_test.go",
+        "session_test.go",
+    ],
     deps = [
+        "//internal/client",
         "//internal/controller",
         "//internal/protocol",
         "//internal/runtime",
