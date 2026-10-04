@@ -6,8 +6,56 @@ py_binary(
     python_version = "PY3",
 )
 
+py_binary(
+    name = "package_macos",
+    srcs = [
+        "package_macos.py",
+        "prepare_runtime.py",
+    ],
+    main = "package_macos.py",
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "prepare_notices",
+    srcs = [
+        "package_macos.py",
+        "prepare_notices.py",
+        "prepare_runtime.py",
+    ],
+    data = glob(["notices/*"]),
+    main = "prepare_notices.py",
+    python_version = "PY3",
+)
+
 py_test(
-    name = "release_test",
+    name = "notice_test",
+    size = "small",
+    srcs = [
+        "package_macos.py",
+        "prepare_notices.py",
+        "prepare_runtime.py",
+        "test_prepare_notices.py",
+    ],
+    data = glob(["notices/*"]),
+    main = "test_prepare_notices.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "package_test",
+    size = "small",
+    srcs = [
+        "package_macos.py",
+        "prepare_runtime.py",
+        "test_package_macos.py",
+    ],
+    main = "test_package_macos.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "runtime_test",
     size = "small",
     srcs = [
         "prepare_runtime.py",
@@ -17,8 +65,21 @@ py_test(
     python_version = "PY3",
 )
 
+test_suite(
+    name = "release_test",
+    tests = [
+        ":notice_test",
+        ":package_test",
+        ":runtime_test",
+        "//tools/release/installer:installer_test",
+    ],
+)
+
 filegroup(
     name = "format_srcs",
-    srcs = ["BUILD.bazel"],
+    srcs = [
+        "BUILD.bazel",
+        "//tools/release/installer:format_srcs",
+    ],
     visibility = ["//:__pkg__"],
 )

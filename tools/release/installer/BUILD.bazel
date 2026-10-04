@@ -1,0 +1,51 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+# Gazelle treats the normal-named cgo fixture as production source. Keep the
+# single cgo compilation and test-only source boundary explicit in this package.
+# gazelle:ignore
+
+INSTALLER_SRCS = [
+    "acl_darwin.go",
+    "install_darwin.go",
+    "main_darwin.go",
+]
+
+go_library(
+    name = "installer_lib",
+    srcs = INSTALLER_SRCS,
+    cgo = True,
+    importpath = "github.com/AbhinavSingh95/mica-mesh/tools/release/installer",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//internal/setup",
+        "@org_golang_x_sys//unix",
+    ],
+)
+
+go_binary(
+    name = "installer",
+    embed = [":installer_lib"],
+    visibility = ["//tools/release:__pkg__"],
+)
+
+go_test(
+    name = "installer_test",
+    size = "small",
+    srcs = INSTALLER_SRCS + [
+        "acl_fixture_darwin.go",
+        "install_darwin_test.go",
+        "process_darwin_test.go",
+    ],
+    cgo = True,
+    visibility = ["//tools/release:__pkg__"],
+    deps = [
+        "//internal/setup",
+        "@org_golang_x_sys//unix",
+    ],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//tools/release:__pkg__"],
+)

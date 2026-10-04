@@ -17,6 +17,7 @@ go_sdk.nogo(
     includes = [
         "//cmd:__subpackages__",
         "//internal:__subpackages__",
+        "//tools/release/installer:__pkg__",
     ],
     nogo = "//:nogo",
 )
