@@ -43,50 +43,24 @@ func resolve(ctx context.Context, explicit string, browse browseFunc) (string, e
 	if explicit != "" {
 		return explicit, nil
 	}
-	window, cancel := context.WithTimeout(ctx, browseBudget)
-	defer cancel()
-	candidates := make(map[uuid.UUID]string)
-	count := 0
-	overflow := false
-	err := browse(window, func(info ControllerInfo) {
-		count++
-		if count > maxEntries {
-			overflow = true
-			cancel()
-			return
-		}
-		id, err := uuid.Parse(info.InstanceID)
-		if err != nil || id == uuid.Nil || info.ProtocolMajor != protocol.Major || !remoteIPv4(net.ParseIP(info.IPv4)) || info.Port < 1 || info.Port > 65535 || info.Hostname == "" || len(info.Hostname) > 253 {
-			return
-		}
-		address := net.JoinHostPort(net.ParseIP(info.IPv4).String(), fmt.Sprint(info.Port))
-		if previous, ok := candidates[id]; !ok || address < previous {
-			candidates[id] = address
-		}
-	})
-	if ctx.Err() != nil {
-		return "", ctx.Err()
+	choices, err := candidates(ctx, browse)
+	if err != nil {
+		return "", err
 	}
-	if overflow {
-		return "", errors.New("too many discovery advertisements; select --controller-address HOST:PORT")
-	}
-	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
-		return "", fmt.Errorf("browse controllers: %w; use --controller-address HOST:PORT", err)
-	}
-	addresses := make([]string, 0, len(candidates))
-	for _, address := range candidates {
-		addresses = append(addresses, address)
-	}
-	sort.Strings(addresses)
-	switch len(addresses) {
+	switch len(choices) {
 	case 0:
 		return "", errors.New("no compatible controller found; use --controller-address HOST:PORT")
 	case 1:
-		return addresses[0], nil
+		return choices[0].Address, nil
 	default:
+		addresses := make([]string, len(choices))
+		for i, choice := range choices {
+			addresses[i] = choice.Address
+		}
 		return "", fmt.Errorf("multiple controllers found (%s); select --controller-address HOST:PORT", strings.Join(addresses, ", "))
 	}
 }
+
 func remoteIPv4(ip net.IP) bool {
 	return ip.To4() != nil && !ip.IsLoopback() && (ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast())
 }
@@ -176,4 +150,85 @@ func ValidateLocalIPv4(address string, listen net.IP, allowLoopback bool) error 
 		}
 	}
 	return errors.New("--advertise-address must exist on a local interface")
+}
+
+// Candidate is one compatible Controller identity and endpoint.
+type Candidate struct{ InstanceID, Hostname, Address string }
+
+// Candidates gathers a bounded, sorted snapshot of compatible LAN Controllers.
+func Candidates(ctx context.Context) ([]Candidate, error) { return candidates(ctx, browseMDNS) }
+func candidates(ctx context.Context, browse browseFunc) ([]Candidate, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	window, cancel := context.WithTimeout(ctx, browseBudget)
+	defer cancel()
+	candidates := make(map[uuid.UUID]Candidate)
+	count := 0
+	overflow := false
+	err := browse(window, func(info ControllerInfo) {
+		count++
+		if count > maxEntries {
+			overflow = true
+			cancel()
+			return
+		}
+		id, err := uuid.Parse(info.InstanceID)
+		if err != nil || id == uuid.Nil || info.ProtocolMajor != protocol.Major || !remoteIPv4(net.ParseIP(info.IPv4)) || info.Port < 1 || info.Port > 65535 || info.Hostname == "" || len(info.Hostname) > 253 {
+			return
+		}
+		address := net.JoinHostPort(net.ParseIP(info.IPv4).String(), fmt.Sprint(info.Port))
+		choice := Candidate{InstanceID: id.String(), Hostname: info.Hostname, Address: address}
+		if previous, ok := candidates[id]; !ok || address < previous.Address || address == previous.Address && choice.Hostname < previous.Hostname {
+			candidates[id] = choice
+		}
+	})
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if overflow {
+		return nil, errors.New("too many discovery advertisements; select --controller-address HOST:PORT")
+	}
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		return nil, fmt.Errorf("browse controllers: %w; use --controller-address HOST:PORT", err)
+	}
+
+	result := make([]Candidate, 0, len(candidates))
+	for _, choice := range candidates {
+		result = append(result, choice)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Address != result[j].Address {
+			return result[i].Address < result[j].Address
+		}
+		return result[i].InstanceID < result[j].InstanceID
+	})
+	return result, nil
+}
+
+// InterfaceAddress is one usable local LAN IPv4 and its interface name.
+type InterfaceAddress struct{ Name, IPv4 string }
+
+// InterfaceAddresses returns named LAN IPv4 choices without requiring multicast.
+func InterfaceAddresses() ([]InterfaceAddress, error) {
+	addresses, err := localAddresses()
+	if err != nil {
+		return nil, err
+	}
+	return interfaceAddresses(addresses), nil
+}
+func interfaceAddresses(addresses []localAddress) []InterfaceAddress {
+	var result []InterfaceAddress
+	for _, address := range addresses {
+		if address.iface.Flags&net.FlagUp != 0 && remoteIPv4(address.ip) {
+			result = append(result, InterfaceAddress{Name: address.iface.Name, IPv4: address.ip.String()})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name != result[j].Name {
+			return result[i].Name < result[j].Name
+		}
+		return result[i].IPv4 < result[j].IPv4
+	})
+	return result
 }

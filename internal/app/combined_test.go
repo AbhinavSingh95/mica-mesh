@@ -53,7 +53,7 @@ func TestCombinedModeUsesSameAdmissionPath(t *testing.T) {
 	go func() { serveDone <- server.Serve(external) }()
 	go func() { peerDone <- peer.RunRuntime(ctx) }()
 	go func() {
-		memberDone <- worker.RunMembership(ctx, peer, external.Addr().String(), func(context.Context) (string, error) { return cl.Addr().String(), nil })
+		memberDone <- worker.RunMembership(ctx, peer, external.Addr().String(), func(context.Context) (string, error) { return cl.Addr().String(), nil }, nil)
 	}()
 	t.Cleanup(func() {
 		open()

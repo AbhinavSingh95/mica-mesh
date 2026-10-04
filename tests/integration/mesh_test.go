@@ -258,7 +258,7 @@ func (f *fixture) membership(c *controllerProcess, w *workerProcess) {
 	w.memberDone = make(chan error, 1)
 	address := c.rpc.address
 	go func() {
-		w.memberDone <- worker.RunMembership(ctx, w.svc, w.rpc.address, func(context.Context) (string, error) { return address, nil })
+		w.memberDone <- worker.RunMembership(ctx, w.svc, w.rpc.address, func(context.Context) (string, error) { return address, nil }, nil)
 	}()
 }
 func (f *fixture) register(c *controllerProcess, w *workerProcess) {

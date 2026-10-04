@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "app",
-    srcs = ["app.go"],
+    srcs = [
+        "app.go",
+        "process.go",
+    ],
     importpath = "github.com/AbhinavSingh95/mica-mesh/internal/app",
     visibility = ["//:__subpackages__"],
     deps = [

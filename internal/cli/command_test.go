@@ -462,3 +462,94 @@ func TestManagedLayoutFollowsExecutableLink(t *testing.T) {
 		t.Fatal("accepted missing executable")
 	}
 }
+
+func TestRoleCommandsMapToOneRole(t *testing.T) {
+	for name, want := range map[string]config.Role{"controller": config.RoleController, "agent": config.RoleWorker} {
+		c, err := parse([]string{name, "--config", fileConfig(t, `{}`), "--plain"})
+		if err != nil || c.roles != want {
+			t.Errorf("%s: role=%v error=%v", name, c.roles, err)
+		}
+	}
+}
+func TestControllerNeedsNoAssets(t *testing.T) {
+	c, err := parse([]string{"controller", "--config", fileConfig(t, `{}`)})
+	if err != nil || c.roles != config.RoleController {
+		t.Fatalf("role=%v error=%v", c.roles, err)
+	}
+}
+func TestLocalDefaultsUseDistinctFixedPorts(t *testing.T) {
+	for _, role := range []string{"controller", "agent"} {
+		c, err := parse([]string{role, "--local", "--config", fileConfig(t, `{}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := ""
+		if role == "agent" {
+			target = "127.0.0.1:50051"
+		}
+		if c.cfg.ControllerListen != "127.0.0.1:50051" || c.cfg.WorkerListen != "127.0.0.1:50052" || c.cfg.ControllerAddress != target || c.cfg.RuntimePort != 8080 {
+			t.Fatalf("%s config=%+v", role, c.cfg)
+		}
+	}
+}
+func TestLocalIgnoresStoredRemoteTarget(t *testing.T) {
+	for _, role := range []string{"controller", "agent"} {
+		c, err := parse([]string{role, "--local", "--config", fileConfig(t, `{"controller_address":"192.0.2.2:8000","controller_listen":"192.0.2.3:8001","worker_listen":"192.0.2.3:8002","advertise_address":"192.0.2.3","runtime_port":8081}`), "--worker-listen", "127.0.0.1:0", "--controller-listen", "127.0.0.1:0"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.cfg.WorkerListen != "127.0.0.1:0" || c.cfg.ControllerListen != "127.0.0.1:0" || c.cfg.RuntimePort != 8081 || strings.Contains(c.cfg.ControllerAddress, "192.") || strings.Contains(c.cfg.AdvertiseAddress, "192.") {
+			t.Fatalf("config=%+v", c.cfg)
+		}
+	}
+}
+func TestLocalRejectsExplicitNonLoopbackFlags(t *testing.T) {
+	for _, flag := range []string{"controller-address", "controller-listen", "worker-listen", "advertise-address"} {
+		value := "192.0.2.1:50051"
+		if flag == "advertise-address" {
+			value = "192.0.2.1"
+		}
+		if _, err := parse([]string{"agent", "--local", "--config", fileConfig(t, `{}`), "--" + flag, value}); err == nil {
+			t.Errorf("accepted %s", flag)
+		}
+	}
+	for _, args := range [][]string{{"controller", "--controller-address", ""}, {"agent", "--controller-address", ""}, {"agent", "--controller-address", "127.0.0.1:0"}, {"agent", "--worker-listen", "0.0.0.0:0"}} {
+		if _, err := parse(append(args, "--local", "--config", fileConfig(t, `{}`))); err == nil {
+			t.Errorf("accepted %v", args)
+		}
+	}
+}
+func TestRoleHelpShowsAgentTerminology(t *testing.T) {
+	for _, role := range []string{"controller", "agent"} {
+		help := commandHelp(role)
+		if !strings.Contains(help, "--local") || !strings.Contains(help, "Agent") || strings.Contains(help, "Worker listener") {
+			t.Errorf("%s help=%s", role, help)
+		}
+	}
+}
+
+type forbiddenRoleInput struct{ t *testing.T }
+
+func (r forbiddenRoleInput) Read([]byte) (int, error) {
+	r.t.Error("plain role read consent input")
+	return 0, io.EOF
+}
+func TestPlainRolesNeverPromptOrDownload(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, role := range []string{"controller", "agent"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		var out, diag bytes.Buffer
+		args := []string{role, "--plain", "--local", "--config", fileConfig(t, `{}`), "--controller-listen", "127.0.0.1:0", "--worker-listen", "127.0.0.1:0"}
+		code := Main(ctx, args, forbiddenRoleInput{t}, &out, &diag)
+		if role == "controller" && code != 0 {
+			t.Fatalf("Controller requires assets: %s", diag.String())
+		}
+		if role == "agent" && (code == 0 || !strings.Contains(diag.String(), "setup")) {
+			t.Fatalf("unprepared Agent result=%d diagnostics=%s", code, diag.String())
+		}
+		if out.Len() != 0 || strings.Contains(diag.String(), "[y/N]") || strings.Contains(diag.String(), "Downloading") {
+			t.Fatalf("plain role prompted/downloaded: %s %s", out.String(), diag.String())
+		}
+	}
+}

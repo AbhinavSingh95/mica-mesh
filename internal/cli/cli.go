@@ -84,6 +84,24 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			err = runDoctor(ctx, c, stderr)
 		case "start":
 			err = app.Run(ctx, c.cfg, c.roles)
+		case "controller", "agent":
+			network := app.LAN
+			if c.local {
+				network = app.Local
+			} else {
+				listener := c.cfg.ControllerListen
+				if c.roles == config.RoleWorker {
+					listener = c.cfg.WorkerListen
+				}
+				_, err = fmt.Fprintf(stderr, "%s listens on %s. Devices on your LAN can connect.\n", c.name, listener)
+			}
+			if err == nil {
+				var process *app.Process
+				process, err = app.Start(ctx, c.cfg, c.roles, app.Options{Network: network})
+				if err == nil {
+					err = process.Wait()
+				}
+			}
 		case "status":
 			err = clusterStatus(ctx, c.cfg.ControllerAddress, stdout)
 		}
@@ -102,6 +120,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 const usage = `mica-mesh — private LAN inference mesh
 
 Usage:
+  mica-mesh controller [--local] [--plain] [options]
+  mica-mesh agent [--local] [--plain] [options]
   mica-mesh setup [--yes]
   mica-mesh doctor [--role agent|controller|client] [--probe] [--verbose] [options]
   mica-mesh start --controller [--worker] [options]
@@ -114,7 +134,7 @@ Usage:
 const commandOptions = `Options:
   --config PATH                 JSON config (default ~/.config/mica-mesh/config.json)
   --controller-listen HOST:PORT  Controller listener (default 0.0.0.0:50051)
-  --worker-listen HOST:PORT      Worker listener (default 0.0.0.0:50052)
+  --worker-listen HOST:PORT      Agent listener (default 0.0.0.0:50052)
   --advertise-address IPv4       Local LAN IPv4 address override
   --runtime-binary PATH          Absolute prepared llama-server path
   --model-path PATH              Absolute prepared GGUF path
@@ -133,6 +153,8 @@ If multicast is unavailable or several controllers are found, use an explicit ad
 
 func commandHelp(name string) string {
 	switch name {
+	case "controller", "agent":
+		return "Usage: mica-mesh " + name + " [--local] [--plain] [options]\nRun one role per terminal. Controller accepts requests through run.\nAgent owns the prepared runtime. No prompts or downloads in plain mode.\n--local uses loopback only: Controller 127.0.0.1:50051, Agent 127.0.0.1:50052.\n--plain runs foreground services.\n\n" + commandOptions + discoveryHelp
 	case "setup":
 		return "Usage: mica-mesh setup [--yes]\nPrepare the pinned model in your managed data folder.\nUse --yes to consent in scripts. Setup needs an installed native runtime bundle.\n"
 	case "doctor":

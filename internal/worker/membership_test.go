@@ -103,7 +103,7 @@ func member(t *testing.T, s *Service, c *controlServer) *membershipRun {
 		}
 	}}
 	go func() {
-		r.done <- runMembership(ctx, s, "127.0.0.1:12345", func(context.Context) (string, error) { return addr, nil }, timing)
+		r.done <- runMembership(ctx, s, "127.0.0.1:12345", func(context.Context) (string, error) { return addr, nil }, nil, timing)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -328,4 +328,81 @@ func TestReconnectJitterHonorsBounds(t *testing.T) {
 			t.Errorf("retry base=%v maximum=%v got=%v want=%v", tc.base, tc.maximum, got, tc.want)
 		}
 	}
+}
+
+func TestMembershipStatusRequiresRegistration(t *testing.T) {
+	c := control()
+	c.registrationFailures = 1
+	c.unknown = true
+	addr := controllerServer(t, c)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	observed := make(chan MembershipStatus, 32)
+	ticks := make(chan struct{})
+	waits := make(chan time.Duration, 8)
+	timing := membershipTiming{jitter: func(d time.Duration) time.Duration { return d }, wait: func(ctx context.Context, d time.Duration) error {
+		waits <- d
+		select {
+		case <-ticks:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	done := make(chan error, 1)
+	svc := New(workerID, config(), &meshv1.HardwareInfo{}, fakeruntime.New())
+	go func() {
+		done <- runMembership(ctx, svc, "127.0.0.1:12345", func(context.Context) (string, error) { return addr, nil }, func(s MembershipStatus) { observed <- s }, timing)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		if err := resultWait(t, done); err != nil {
+			t.Error(err)
+		}
+	})
+	state := func(want bool) {
+		t.Helper()
+		select {
+		case s := <-observed:
+			if s.Registered != want || s.ControllerAddress != addr {
+				t.Fatalf("membership=%+v want registered=%v", s, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("missing membership transition")
+		}
+	}
+	registration(t, c)
+	select {
+	case <-waits:
+	case <-time.After(time.Second):
+		t.Fatal("retry not waiting")
+	}
+	state(false)
+	ticks <- struct{}{}
+	registration(t, c)
+	// Address refresh may publish waiting again. Consume until registration proof.
+	for {
+		select {
+		case s := <-observed:
+			if s.Registered {
+				goto registered
+			}
+		case <-time.After(time.Second):
+			t.Fatal("registration not observed")
+		}
+	}
+registered:
+	select {
+	case <-waits:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat not waiting")
+	}
+	ticks <- struct{}{}
+	heartbeat(t, c)
+	state(false)
+	registration(t, c)
+	state(true)
+	cancel()
+	// Final callback clears the connected state and retains the attempted address.
+	state(false)
 }

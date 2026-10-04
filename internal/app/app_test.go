@@ -147,7 +147,7 @@ func TestEndpointUsesListenerPort(t *testing.T) {
 	}
 }
 
-func TestRemoteWorkerRejectsLoopback(t *testing.T) {
+func TestLANWorkerStillRejectsLoopback(t *testing.T) {
 	_, err := workerEndpointFor(context.Background(), "", "127.0.0.1:1234", &net.TCPAddr{IP: net.IPv4zero, Port: 4321}, false)
 	if err == nil {
 		t.Fatal("remote worker registered loopback")

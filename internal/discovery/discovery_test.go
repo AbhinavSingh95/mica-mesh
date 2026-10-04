@@ -285,3 +285,58 @@ func TestNoBrowseInterfacesReportsFallback(t *testing.T) {
 		t.Fatalf("empty selection could reactivate upstream defaults: interfaces=%v error=%v", got, err)
 	}
 }
+
+func TestCandidatesAreBoundedCopiedAndSorted(t *testing.T) {
+	a := candidate()
+	b := a
+	b.InstanceID = secondID
+	b.IPv4 = "192.0.2.2"
+	b.Hostname = "other.local."
+	duplicate := a
+	duplicate.InstanceID = strings.ToUpper(a.InstanceID)
+	duplicate.Hostname = "aaa.local."
+	input := []ControllerInfo{b, a, duplicate}
+	got, err := candidates(context.Background(), entries(input...))
+	if err != nil || len(got) != 2 {
+		t.Fatalf("candidates=%v error=%v", got, err)
+	}
+	if got[0].InstanceID != firstID || got[0].Hostname != "aaa.local." || got[0].Address != "192.0.2.1:4321" || got[1].Address != "192.0.2.2:4321" {
+		t.Fatalf("choices=%+v", got)
+	}
+	got[0].Hostname = "mutated"
+	again, err := candidates(context.Background(), entries(input...))
+	if err != nil || again[0].Hostname != "aaa.local." {
+		t.Fatalf("caller changed snapshot: %v %v", again, err)
+	}
+	tooMany := make([]ControllerInfo, 257)
+	if _, err := candidates(context.Background(), entries(tooMany...)); err == nil || !strings.Contains(err.Error(), "too many") {
+		t.Fatalf("invalid entries escaped bound: %v", err)
+	}
+}
+func TestCandidatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := candidates(ctx, func(ctx context.Context, emit func(ControllerInfo)) error {
+		emit(candidate())
+		cancel()
+		return ctx.Err()
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error=%v", err)
+	}
+}
+func TestNamedInterfaceAddresses(t *testing.T) {
+	input := []localAddress{
+		{ip: net.ParseIP("192.0.2.2"), iface: net.Interface{Name: "en1", Flags: net.FlagUp}},
+		{ip: net.ParseIP("127.0.0.1"), iface: net.Interface{Name: "lo0", Flags: net.FlagUp}},
+		{ip: net.ParseIP("192.0.2.1"), iface: net.Interface{Name: "en0", Flags: net.FlagUp}},
+		{ip: net.ParseIP("192.0.2.3"), iface: net.Interface{Name: "down"}},
+	}
+	got := interfaceAddresses(input)
+	if len(got) != 2 || got[0].Name != "en0" || got[0].IPv4 != "192.0.2.1" || got[1].Name != "en1" {
+		t.Fatalf("choices=%v", got)
+	}
+	got[0].Name = "changed"
+	if next := interfaceAddresses(input); next[0].Name != "en0" {
+		t.Fatal("snapshot aliases input")
+	}
+}

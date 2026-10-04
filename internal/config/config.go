@@ -180,23 +180,54 @@ func scanConfig(data []byte, assets *AssetFields) error {
 // does not inspect local files or bind ports: worker startup owns those checks,
 // so missing artifacts can produce a visible unhealthy worker.
 func Validate(cfg Config, roles Role) error {
+	return validate(cfg, roles, false)
+}
+
+// ValidateLocal applies loopback policy. Only listener ports may be zero.
+// As in Validate, zero roles checks common settings before asset resolution.
+func ValidateLocal(cfg Config, roles Role) error {
+	if roles != 0 && roles != RoleController && roles != RoleWorker {
+		return errors.New("local mode requires one Controller or Agent role")
+	}
+	return validate(cfg, roles, true)
+}
+
+func validate(cfg Config, roles Role, local bool) error {
 	for _, setting := range []struct {
 		name, address string
 	}{
 		{"controller_listen", cfg.ControllerListen},
 		{"worker_listen", cfg.WorkerListen},
 	} {
-		if err := validateAddress(setting.address, false); err != nil {
+		var err error
+		if local {
+			err = validateLoopback(setting.address, true)
+		} else {
+			err = validateAddress(setting.address, false)
+		}
+		if err != nil {
 			return fmt.Errorf("%s: %w", setting.name, err)
 		}
 	}
+	if local && roles == RoleWorker && cfg.ControllerAddress == "" {
+		return errors.New("local Agent needs --controller-address 127.0.0.1:PORT")
+	}
 	if cfg.ControllerAddress != "" {
-		if err := validateAddress(cfg.ControllerAddress, true); err != nil {
+		var err error
+		if local {
+			err = validateLoopback(cfg.ControllerAddress, false)
+		} else {
+			err = validateAddress(cfg.ControllerAddress, true)
+		}
+		if err != nil {
 			return fmt.Errorf("controller_address: %w", err)
 		}
 	}
 	if cfg.AdvertiseAddress != "" {
 		ip := net.ParseIP(cfg.AdvertiseAddress)
+		if local && (ip.To4() == nil || !ip.IsLoopback()) {
+			return errors.New("--local requires a concrete loopback advertise address; use 127.0.0.1")
+		}
 		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() {
 			return errors.New("advertise_address must be a concrete IPv4 address")
 		}
@@ -252,6 +283,26 @@ func validateAddress(address string, requireHost bool) error {
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
 		return errors.New("port must be between 1 and 65535")
+	}
+	return nil
+}
+
+func validateLoopback(address string, listener bool) error {
+	host, portText, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("--local requires IPv4 loopback HOST:PORT: %w", err)
+	}
+	ip := net.ParseIP(host)
+	if ip.To4() == nil || !ip.IsLoopback() {
+		return errors.New("--local requires a concrete IPv4 loopback address; use 127.0.0.1")
+	}
+	port, err := strconv.Atoi(portText)
+	minimum := 1
+	if listener {
+		minimum = 0
+	}
+	if err != nil || port < minimum || port > 65535 {
+		return fmt.Errorf("port must be between %d and 65535", minimum)
 	}
 	return nil
 }

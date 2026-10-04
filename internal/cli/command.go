@@ -27,12 +27,13 @@ type command struct {
 	roles               config.Role
 	assets              config.AssetFields
 	yes, probe, verbose bool
+	local, plain        bool
 	doctorRole          doctor.Role
 }
 
 func parse(args []string) (command, error) {
 	c := command{name: args[0]}
-	if c.name != "start" && c.name != "status" && c.name != "run" && c.name != "setup" && c.name != "doctor" {
+	if c.name != "controller" && c.name != "agent" && c.name != "start" && c.name != "status" && c.name != "run" && c.name != "setup" && c.name != "doctor" {
 		return c, fmt.Errorf("unknown command %q; use --help for usage", c.name)
 	}
 	f := flag.NewFlagSet(c.name, flag.ContinueOnError)
@@ -67,6 +68,12 @@ func parse(args []string) (command, error) {
 		f.StringVar(&doctorRole, "role", "agent", "agent, controller, or client")
 		f.BoolVar(&c.probe, "probe", false, "start and stop the Agent runtime")
 		f.BoolVar(&c.verbose, "verbose", false, "show diagnostic details")
+	}
+	if c.name == "controller" || c.name == "agent" {
+		f.BoolVar(&c.local, "local", false, "use loopback connections on this Mac")
+		f.BoolVar(&c.plain, "plain", false, "run foreground services without prompts")
+		controllerRole = c.name == "controller"
+		workerRole = c.name == "agent"
 	}
 	if c.name == "start" {
 		f.BoolVar(&controllerRole, "controller", false, "controller role")
@@ -119,9 +126,20 @@ func parse(args []string) (command, error) {
 		return c, err
 	}
 	cfg := loaded.Config
+	if c.local {
+		cfg.ControllerListen = "127.0.0.1:50051"
+		cfg.WorkerListen = "127.0.0.1:50052"
+		cfg.AdvertiseAddress = ""
+		cfg.ControllerAddress = ""
+		if c.roles == config.RoleWorker {
+			cfg.ControllerAddress = "127.0.0.1:50051"
+		}
+	}
+	controllerTargetVisited := false
 	f.Visit(func(v *flag.Flag) {
 		switch v.Name {
 		case "controller-address":
+			controllerTargetVisited = true
 			cfg.ControllerAddress = values.ControllerAddress
 		case "controller-listen":
 			cfg.ControllerListen = values.ControllerListen
@@ -148,13 +166,26 @@ func parse(args []string) (command, error) {
 			cfg.Timeout = values.Timeout
 		}
 	})
+	if c.local && c.roles == config.RoleWorker && cfg.ControllerAddress == "" {
+		return c, errors.New("local Agent needs --controller-address 127.0.0.1:PORT")
+	}
+	if c.name == "controller" && controllerTargetVisited {
+		return c, errors.New("Controller cannot use --controller-address; use it with Agent")
+	}
 	c.cfg = cfg
 	c.assets = loaded.Assets
 	// Worker asset validation follows managed resolution in Main.
 	if c.name == "doctor" {
 		return c, nil
 	}
-	return c, config.Validate(cfg, c.roles&^config.RoleWorker)
+	return c, c.validate(cfg, c.roles&^config.RoleWorker)
+}
+
+func (c command) validate(cfg config.Config, roles config.Role) error {
+	if c.local {
+		return config.ValidateLocal(cfg, roles)
+	}
+	return config.Validate(cfg, roles)
 }
 
 // resolveWorkerConfig owns local managed resolution after argument parsing.
@@ -163,7 +194,7 @@ func resolveWorkerConfig(ctx context.Context, c command) (config.Config, error) 
 	if c.assets.RuntimeBinary && c.assets.ModelPath ||
 		c.assets.RuntimeBinary && !filepath.IsAbs(c.cfg.RuntimeBinary) ||
 		c.assets.ModelPath && !filepath.IsAbs(c.cfg.ModelPath) {
-		return c.cfg, config.Validate(c.cfg, c.roles)
+		return c.cfg, c.validate(c.cfg, c.roles)
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -181,7 +212,7 @@ func resolveWorkerConfig(ctx context.Context, c command) (config.Config, error) 
 	if err != nil {
 		return cfg, err
 	}
-	return cfg, config.Validate(cfg, c.roles)
+	return cfg, c.validate(cfg, c.roles)
 }
 
 // managedLayout resolves the installed CLI link before selecting its bundle.
