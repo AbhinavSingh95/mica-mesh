@@ -2,7 +2,12 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "setup",
-    srcs = ["release.go"],
+    srcs = [
+        "download.go",
+        "manager.go",
+        "receipt.go",
+        "release.go",
+    ],
     importpath = "github.com/AbhinavSingh95/mica-mesh/internal/setup",
     visibility = ["//:__subpackages__"],
     deps = ["@org_golang_x_sys//unix"],
@@ -11,8 +16,13 @@ go_library(
 go_test(
     name = "setup_test",
     size = "small",
-    srcs = ["release_test.go"],
+    srcs = [
+        "manager_test.go",
+        "receipt_test.go",
+        "release_test.go",
+    ],
     embed = [":setup"],
+    deps = ["@org_golang_x_sys//unix"],
 )
 
 filegroup(

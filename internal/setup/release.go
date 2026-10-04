@@ -169,8 +169,12 @@ func validPath(name string) bool {
 // Token validation rejects duplicate/null values and case variants before the
 // typed decoder, which otherwise accepts case-insensitive JSON field names.
 func strictJSON(data []byte) error {
-	d := json.NewDecoder(bytes.NewReader(data))
 	fields := map[string]bool{"schema": true, "version": true, "architecture": true, "runtime_version": true, "runtime_commit": true, "backend": true, "tested_os": true, "files": true, "path": true, "size_bytes": true, "sha256": true, "purpose": true}
+	return strictJSONFields(data, fields)
+}
+
+func strictJSONFields(data []byte, fields map[string]bool) error {
+	d := json.NewDecoder(bytes.NewReader(data))
 	var value func() error
 	value = func() error {
 		token, err := d.Token()
