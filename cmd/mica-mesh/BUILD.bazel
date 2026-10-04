@@ -25,6 +25,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//internal/cli",
+        "//internal/terminal",
     ] + select({
         "@rules_go//go/platform:android": [
             "@org_golang_x_sys//unix",
@@ -46,6 +47,7 @@ go_test(
     name = "mica-mesh_test",
     srcs = [
         "consent_darwin_test.go",
+        "guided_darwin_test.go",
         "input_test.go",
         "main_test.go",
         "output_test.go",
@@ -58,7 +60,6 @@ go_test(
     env = {"MICA_TEST_SERVER": "$(rlocationpath //internal/runtime/llamacpp/testserver)"},
     deps = [
         "//internal/protocol",
-        "//internal/setup",
         "//protocol/mesh/v1:mesh",
         "@com_github_google_uuid//:uuid",
         "@org_golang_google_grpc//:grpc",
@@ -66,5 +67,13 @@ go_test(
         "@org_golang_google_grpc//status",
         "@org_golang_x_sys//unix",
         "@rules_go//go/runfiles",
-    ],
+    ] + select({
+        "@rules_go//go/platform:darwin": [
+            "//internal/setup",
+        ],
+        "@rules_go//go/platform:ios": [
+            "//internal/setup",
+        ],
+        "//conditions:default": [],
+    }),
 )

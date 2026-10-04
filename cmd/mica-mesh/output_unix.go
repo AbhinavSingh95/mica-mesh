@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -82,7 +83,7 @@ func reportOutputError(err error) {
 	if _, flagErr = unix.FcntlInt(2, unix.F_SETFL, flags|unix.O_NONBLOCK); flagErr != nil {
 		return
 	}
-	_, _ = unix.Write(2, []byte(fmt.Sprintf("mica-mesh: initialize cancellable output: %v\n", err)))
+	_, _ = unix.Write(2, []byte(fmt.Sprintf("mica-mesh: %v\n", err)))
 	_, _ = unix.FcntlInt(2, unix.F_SETFL, flags)
 }
 
@@ -115,8 +116,12 @@ func (s *diagnosticSink) Write(data []byte) (int, error) {
 // cancels the process on diagnostic failure. Restore only after every service
 // owner has joined, including standard-log bridge settings changed by SetDefault.
 func ownLogger(stderr *os.File, cancel context.CancelFunc) (func(), func() bool) {
-	previous, writer, flags := slog.Default(), log.Writer(), log.Flags()
 	sink := &diagnosticSink{file: stderr, cancel: cancel}
+	return installLogger(sink), sink.failed.Load
+}
+
+func installLogger(sink io.Writer) func() {
+	previous, writer, flags := slog.Default(), log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewTextHandler(sink, nil)))
-	return func() { slog.SetDefault(previous); log.SetOutput(writer); log.SetFlags(flags) }, sink.failed.Load
+	return func() { slog.SetDefault(previous); log.SetOutput(writer); log.SetFlags(flags) }
 }

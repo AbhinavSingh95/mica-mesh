@@ -1,0 +1,236 @@
+diff --git a/terminal_reader.go b/terminal_reader.go
+--- a/terminal_reader.go
++++ b/terminal_reader.go
+@@ -6,11 +6,11 @@
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"runtime"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"time"
+-	"unicode"
+ 	"unicode/utf16"
+ 	"unicode/utf8"
+ 
+@@ -137,14 +137,25 @@
+ // StreamEvents sends events to the provided channel. It stops when the context
+ // is closed or when an error occurs.
+ func (d *TerminalReader) StreamEvents(ctx context.Context, eventc chan<- Event) error {
+-	var buf bytes.Buffer
++	ctx, cancel := context.WithCancel(ctx)
++	defer cancel()
++	var storage [readBufSize]byte
++	buf := storage[:0]
+ 	errc := make(chan error, 1)
+ 	readc := make(chan []byte)
+ 	timeout := time.NewTimer(d.EscTimeout)
++	defer timeout.Stop()
+ 	ttimeout := time.Now().Add(d.EscTimeout)
+ 
+ 	var wg sync.WaitGroup
+ 	wg.Add(1)
++	defer func() {
++		cancel()
++		if reader, ok := d.r.(cancelreader.CancelReader); ok {
++			reader.Cancel()
++		}
++		wg.Wait()
++	}()
+ 
+ 	go func() {
+ 		defer wg.Done()
+@@ -161,12 +172,9 @@
+ 	for {
+ 		select {
+ 		case <-ctx.Done():
+-			d.sendEvents(eventc, buf.Bytes(), true)
+-			wg.Wait()
+ 			return nil
+ 		case err := <-errc:
+-			d.sendEvents(eventc, buf.Bytes(), true)
+-			wg.Wait()
++			d.sendEvents(ctx, eventc, buf, true)
+ 			return err // return the first error encountered
+ 		case <-timeout.C:
+ 			d.logf("timeout reached")
+@@ -174,16 +182,16 @@
+ 			// Timeout reached process the buffer including any incomplete sequences.
+ 			var n int // n is the number of bytes processed
+ 			timedout := time.Now().After(ttimeout)
+-			if buf.Len() > 0 && timedout {
++			if len(buf) > 0 && timedout {
+ 				d.logf("timeout expired, processing buffer")
+-				n = d.sendEvents(eventc, buf.Bytes(), true)
++				n = d.sendEvents(ctx, eventc, buf, true)
+ 			}
+ 
+ 			if n > 0 {
+-				buf.Next(n)
+-			}
+-
+-			if buf.Len() > 0 {
++				buf = buf[:copy(buf, buf[n:])]
++			}
++
++			if len(buf) > 0 {
+ 				if !timeout.Stop() {
+ 					// drain the channel if it was already running
+ 					select {
+@@ -198,9 +206,24 @@
+ 
+ 		case read := <-readc:
+ 			d.logf("input: %q", read)
+-			buf.Write(read)
++			// Drain an expired bounded prefix before accepting another source read.
++			// No append can grow storage beyond one read buffer.
++			for len(read) > 0 {
++				if len(buf) == cap(buf) {
++					n := d.sendEvents(ctx, eventc, buf, true)
++					if n == 0 {
++						return fmt.Errorf("terminal input sequence exceeds %d bytes", readBufSize)
++					}
++					buf = buf[:copy(buf, buf[n:])]
++				}
++				n := min(len(read), cap(buf)-len(buf))
++				buf = append(buf, read[:n]...)
++				read = read[n:]
++				consumed := d.sendEvents(ctx, eventc, buf, false)
++				buf = buf[:copy(buf, buf[consumed:])]
++			}
+ 			ttimeout = time.Now().Add(d.EscTimeout)
+-			n := d.sendEvents(eventc, buf.Bytes(), false)
++			n := d.sendEvents(ctx, eventc, buf, false)
+ 			if !timeout.Stop() {
+ 				// drain the channel if it was already running
+ 				select {
+@@ -211,10 +234,10 @@
+ 
+ 			if n > 0 {
+ 				d.logf("processed %d bytes from buffer", n)
+-				buf.Next(n)
+-			}
+-
+-			if buf.Len() > 0 {
++				buf = buf[:copy(buf, buf[n:])]
++			}
++
++			if len(buf) > 0 {
+ 				d.logf("resetting timeout for remaining buffer after parse")
+ 				timeout.Reset(d.EscTimeout)
+ 			}
+@@ -228,10 +251,14 @@
+ 	d.logger = logger
+ }
+ 
+-func (d *TerminalReader) sendEvents(eventc chan<- Event, buf []byte, expired bool) int {
++func (d *TerminalReader) sendEvents(ctx context.Context, eventc chan<- Event, buf []byte, expired bool) int {
+ 	n, events := d.eventScanner.scanEvents(buf, expired)
+ 	for _, event := range events {
+-		eventc <- event
++		select {
++		case <-ctx.Done():
++			return n
++		case eventc <- event:
++		}
+ 	}
+ 	return n
+ }
+@@ -269,10 +296,15 @@
+ 		return 0, nil
+ 	}
+ 
+-	var dn int
+ 	d.logf("processing buf %d %q", len(buf), buf)
+-	dn, buf = d.deserializeWin32Input(buf)
+-	total += dn
++	// Mica does not support Win32 input on macOS. Preprocessing it here would
++	// rewrite literal paste content and reconstruct controls after its byte guard.
++	// Outside paste, the Mac input adapter rejects these records before decoding.
++	if runtime.GOOS != "darwin" {
++		var dn int
++		dn, buf = d.deserializeWin32Input(buf)
++		total += dn
++	}
+ 
+ 	// Lookup table first
+ 	if d.lookup && len(buf) > 2 && buf[0] == ansi.ESC {
+@@ -283,54 +315,31 @@
+ 
+ 	// total is the total number of bytes processed
+ 	for len(buf) > 0 {
++		// Bracketed paste is literal text. Looking for the end marker before
++		// decoding controls prevents an incomplete OSC/DCS from swallowing it.
++		if d.paste != nil {
++			const end = "\x1b[201~"
++			if at := bytes.Index(buf, []byte(end)); at >= 0 {
++				d.paste = append(d.paste, buf[:at]...)
++				events = append(events, PasteEvent{strings.ToValidUTF8(string(d.paste), "")}, PasteEndEvent{})
++				d.paste = nil
++				total += at + len(end)
++				buf = buf[at+len(end):]
++				continue
++			}
++			// Keep only a split delimiter prefix in the scanner input buffer.
++			keep := 0
++			for n := 1; n < len(end) && n <= len(buf); n++ {
++				if bytes.Equal(buf[len(buf)-n:], []byte(end[:n])) {
++					keep = n
++				}
++			}
++			n := len(buf) - keep
++			d.paste = append(d.paste, buf[:n]...)
++			return total + n, events
++		}
+ 		esc := buf[0] == ansi.ESC
+ 		n, event := d.Decode(buf)
+-
+-		// Handle bracketed-paste
+-		if d.paste != nil { //nolint:nestif
+-			if _, ok := event.(PasteEndEvent); !ok {
+-				switch event := event.(type) {
+-				case KeyPressEvent:
+-					if len(event.Text) > 0 {
+-						d.paste = append(d.paste, event.Text...)
+-					} else {
+-						seq := string(buf[:n])
+-						isWin32 := strings.HasPrefix(seq, "\x1b[") && strings.HasSuffix(seq, "_")
+-						switch {
+-						case isWin32 && event.Code == KeyEnter && event.Code == event.BaseCode:
+-							// This handles special cases where
+-							// win32-input-mode encodes newlines and other keys
+-							// as keypress events. We need to encode them as
+-							// their respective values.
+-							d.paste = append(d.paste, '\n')
+-						case isWin32 && unicode.IsControl(event.Code) && event.Code == event.BaseCode:
+-							// This handles other cases such as tabs, escapes, etc.
+-							d.paste = append(d.paste, string(event.Code)...)
+-						case !isWin32:
+-							// We ignore all other non-text win32-input-mode events.
+-							if esc && n <= 2 && !expired {
+-								// If the event is an escape sequence and we
+-								// are not expired, we need to wait for more
+-								// input.
+-								return total, events
+-							}
+-							d.paste = append(d.paste, seq...)
+-						}
+-					}
+-				case UnknownEvent:
+-					if !expired {
+-						// If the event is unknown and we are not expired, we
+-						// return need to try to decode the buffer again.
+-						return total, events
+-					}
+-				default:
+-					// Everything else is ignored...
+-				}
+-				buf = buf[n:]
+-				total += n
+-				continue
+-			}
+-		}
+ 
+ 		var isUnknown bool
+ 		switch event.(type) {

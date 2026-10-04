@@ -1,4 +1,9 @@
-exports_files(["zeroconf_lifecycle.patch"])
+exports_files([
+    "bubbles_prompt_limit.patch",
+    "zeroconf_lifecycle.patch",
+    "bubbletea_lifecycle.patch",
+    "ultraviolet_lifecycle.patch",
+])
 
 test_suite(
     name = "zeroconf_lifecycle_test",
@@ -9,4 +14,9 @@ filegroup(
     name = "format_srcs",
     srcs = ["BUILD.bazel"],
     visibility = ["//:__pkg__"],
+)
+
+test_suite(
+    name = "terminal_lifecycle_test",
+    tests = ["//internal/terminal:terminal_test"],
 )

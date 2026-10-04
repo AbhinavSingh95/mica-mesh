@@ -4,6 +4,7 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 # gazelle:prefix github.com/AbhinavSingh95/mica-mesh
 # gazelle:exclude .superpowers
+# gazelle:exclude .local
 
 gazelle(name = "gazelle")
 
@@ -33,10 +34,12 @@ filegroup(
         "//internal/runtime/llamacpp:format_srcs",
         "//internal/runtime/llamacpp/testserver:format_srcs",
         "//internal/setup:format_srcs",
+        "//internal/terminal:format_srcs",
         "//internal/testutil/fakeruntime:format_srcs",
         "//internal/worker:format_srcs",
         "//protocol/mesh/v1:format_srcs",
         "//tests/integration:format_srcs",
+        "//third_party/licenses:format_srcs",
         "//third_party/patches:format_srcs",
         "//tools/release:format_srcs",
     ],

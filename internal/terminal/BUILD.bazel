@@ -1,0 +1,60 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "terminal",
+    srcs = [
+        "console.go",
+        "descriptor.go",
+        "editor.go",
+        "input.go",
+        "sanitize.go",
+        "session.go",
+    ],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/terminal",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/app",
+        "//internal/config",
+        "//internal/setup",
+        "@com_github_charmbracelet_colorprofile//:colorprofile",
+        "@com_github_charmbracelet_x_term//:term",
+        "@com_github_muesli_cancelreader//:cancelreader",
+        "@land_charm_bubbles_v2//key",
+        "@land_charm_bubbles_v2//textarea",
+        "@land_charm_bubbletea_v2//:bubbletea",
+        "@land_charm_lipgloss_v2//:lipgloss",
+        "@org_golang_x_sys//unix",
+    ],
+)
+
+go_test(
+    name = "terminal_test",
+    srcs = [
+        "console_darwin_test.go",
+        "editor_test.go",
+        "input_test.go",
+        "library_test.go",
+    ],
+    embed = [":terminal"],
+    deps = [
+        "@com_github_charmbracelet_ultraviolet//:ultraviolet",
+        "@com_github_muesli_cancelreader//:cancelreader",
+        "@land_charm_bubbletea_v2//:bubbletea",
+    ] + select({
+        "@rules_go//go/platform:darwin": [
+            "@land_charm_lipgloss_v2//:lipgloss",
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:ios": [
+            "@land_charm_lipgloss_v2//:lipgloss",
+            "@org_golang_x_sys//unix",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

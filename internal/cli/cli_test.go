@@ -34,3 +34,11 @@ func TestUnknownCommand(t *testing.T) {
 		t.Errorf("unknown command stdout = %q, want empty", out.String())
 	}
 }
+func TestCommonFlagsBeforeCommand(t *testing.T) {
+	for _, args := range [][]string{{"--plain"}, {"--verbose", "--plain", "--help"}, {"--plain", "setup", "--help"}, {"--verbose", "doctor", "--help"}} {
+		var out, errOut bytes.Buffer
+		if code := cli.Main(context.Background(), args, nil, &out, &errOut); code != 0 || out.Len() == 0 {
+			t.Errorf("args=%v code=%d stdout=%q stderr=%q", args, code, out.String(), errOut.String())
+		}
+	}
+}

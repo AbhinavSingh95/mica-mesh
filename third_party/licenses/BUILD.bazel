@@ -1,0 +1,14 @@
+# Include these notices in any release that ships the guided terminal executable.
+exports_files(["terminal.txt"])
+
+filegroup(
+    name = "terminal_notices",
+    srcs = ["terminal.txt"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

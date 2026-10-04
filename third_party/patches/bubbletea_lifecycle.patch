@@ -1,0 +1,374 @@
+diff --git a/tea.go b/tea.go
+--- a/tea.go
++++ b/tea.go
+@@ -20,8 +20,6 @@
+ 	"os"
+ 	"os/signal"
+ 	"runtime"
+-	"runtime/debug"
+-	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"sync/atomic"
+@@ -506,10 +504,15 @@
+ 	// to ctx.Background() (in case it was not), the internal context is derived from it.
+ 	externalCtx context.Context
+ 
+-	msgs         chan Msg
+-	errs         chan error
+-	finished     chan struct{}
+-	shutdownOnce sync.Once
++	msgs             chan Msg
++	errs             chan error
++	finished         chan struct{}
++	shutdownOnce     sync.Once
++	shutdownErr      error
++	taskMu           sync.Mutex
++	taskClosing      bool
++	tasks            sync.WaitGroup
++	rendererLoopDone chan struct{}
+ 
+ 	profile *colorprofile.Profile // the terminal color profile
+ 
+@@ -721,24 +724,7 @@
+ 					continue
+ 				}
+ 
+-				// Don't wait on these goroutines, otherwise the shutdown
+-				// latency would get too large as a Cmd can run for some time
+-				// (e.g. tick commands that sleep for half a second). It's not
+-				// possible to cancel them so we'll have to leak the goroutine
+-				// until Cmd returns.
+-				go func() {
+-					// Recover from panics.
+-					if !p.disableCatchPanics {
+-						defer func() {
+-							if r := recover(); r != nil {
+-								p.recoverFromPanic(r)
+-							}
+-						}()
+-					}
+-
+-					msg := cmd() // this can be long.
+-					p.Send(msg)
+-				}()
++				p.launch(func() { p.Send(cmd()) })
+ 			}
+ 		}
+ 	}()
+@@ -787,7 +773,8 @@
+ 					if *p.profile != colorprofile.TrueColor {
+ 						tc := colorprofile.TrueColor
+ 						p.profile = &tc
+-						go p.Send(ColorProfileMsg{*p.profile})
++						profile := *p.profile
++						p.launch(func() { p.Send(ColorProfileMsg{profile}) })
+ 					}
+ 				}
+ 
+@@ -811,7 +798,7 @@
+ 					// Only send mouse messages to the renderer if they are an
+ 					// actual mouse event.
+ 					if cmd := p.renderer.onMouse(msg); cmd != nil {
+-						go p.Send(cmd())
++						p.launch(func() { p.Send(cmd()) })
+ 					}
+ 				}
+ 
+@@ -847,18 +834,18 @@
+ 				p.executeQuery(ansi.RequestTermcap(string(msg)))
+ 
+ 			case BatchMsg:
+-				go p.execBatchMsg(msg)
++				p.launch(func() { p.execBatchMsg(msg) })
+ 				continue
+ 
+ 			case sequenceMsg:
+-				go p.execSequenceMsg(msg)
++				p.launch(func() { p.execSequenceMsg(msg) })
+ 				continue
+ 
+ 			case WindowSizeMsg:
+ 				p.renderer.resize(msg.Width, msg.Height)
+ 
+ 			case windowSizeMsg:
+-				go p.checkResize()
++				p.launch(func() { p.checkResize() })
+ 
+ 			case requestCursorPosMsg:
+ 				p.executeQuery(ansi.RequestCursorPositionReport)
+@@ -1011,6 +998,7 @@
+ 	}()
+ 
+ 	defer p.cancel()
++	defer func() { p.shutdown(returnErr != nil); returnErr = errors.Join(returnErr, p.shutdownErr) }()
+ 
+ 	if p.disableInput {
+ 		p.input = nil
+@@ -1095,14 +1083,15 @@
+ 
+ 	// Set the color profile on the renderer and send it to the program.
+ 	p.renderer.setColorProfile(*p.profile)
+-	go p.Send(ColorProfileMsg{*p.profile})
++	profile := *p.profile
++	p.launch(func() { p.Send(ColorProfileMsg{profile}) })
+ 
+ 	// Send the initial size to the program.
+-	go p.Send(resizeMsg)
++	p.launch(func() { p.Send(resizeMsg) })
+ 	p.renderer.resize(resizeMsg.Width, resizeMsg.Height)
+ 
+ 	// Send the environment variables used by the program.
+-	go p.Send(EnvMsg(p.environ))
++	p.launch(func() { p.Send(EnvMsg(p.environ)) })
+ 
+ 	// Init the input reader and initial model.
+ 	model := p.initialModel
+@@ -1211,7 +1200,8 @@
+ // The final render that you would normally see when quitting will be skipped.
+ // [program.Run] returns a [ErrProgramKilled] error.
+ func (p *Program) Kill() {
+-	p.shutdown(true)
++	p.cancel()
++	p.Wait()
+ }
+ 
+ // Wait waits/blocks until the underlying Program finished shutting down.
+@@ -1261,82 +1251,64 @@
+ 	return nil
+ }
+ 
+-// shutdown performs operations to free up resources and restore the terminal
+-// to its original state.
++// launch records accepted work before spawning. Shutdown closes launch sources
++// before waiting. Commands must be immediate or honor their owned context.
++func (p *Program) launch(fn func()) {
++	p.taskMu.Lock()
++	if p.taskClosing {
++		p.taskMu.Unlock()
++		return
++	}
++	p.tasks.Add(1)
++	p.taskMu.Unlock()
++	go func() {
++		defer p.tasks.Done()
++		if !p.disableCatchPanics {
++			defer func() {
++				if r := recover(); r != nil {
++					p.recoverFromGoPanic(r)
++				}
++			}()
++		}
++		fn()
++	}()
++}
++
++// shutdown joins owned work before restoring the terminal.
+ func (p *Program) shutdown(kill bool) {
+ 	p.shutdownOnce.Do(func() {
+ 		p.cancel()
+-
+-		// Wait for all handlers to finish.
++		p.taskMu.Lock()
++		p.taskClosing = true
++		p.taskMu.Unlock()
+ 		p.handlers.shutdown()
+-
+-		// Check if the cancel reader has been setup before waiting and closing.
+ 		if p.cancelReader != nil {
+-			// Wait for input loop to finish.
+-			if p.cancelReader.Cancel() {
+-				if !kill {
+-					p.waitForReadLoop()
+-				}
+-			}
+-			_ = p.cancelReader.Close()
+-		}
+-
+-		if p.renderer != nil {
++			p.cancelReader.Cancel()
++			p.waitForReadLoop()
++			p.shutdownErr = errors.Join(p.shutdownErr, p.cancelReader.Close())
++		}
++		p.tasks.Wait()
++		if p.renderer != nil && p.rendererLoopDone != nil {
+ 			p.stopRenderer(kill)
+ 		}
+-
+-		_ = p.restoreTerminalState()
++		p.shutdownErr = errors.Join(p.shutdownErr, p.restoreTerminalState())
+ 	})
+ }
+ 
+-// recoverFromPanic recovers from a panic, prints the stack trace, and restores
+-// the terminal to a usable state.
+-func (p *Program) recoverFromPanic(r interface{}) {
++// Recover without exposing model/input values or writing behind the renderer.
++func (p *Program) recoverFromPanic(_ interface{}) {
+ 	select {
+ 	case p.errs <- ErrProgramPanic:
+ 	default:
+ 	}
+-	p.shutdown(true) // Ok to call here, p.Run() cannot do it anymore.
+-	// We use "\r\n" to ensure the output is formatted even when restoring the
+-	// terminal does not work or when raw mode is still active.
+-	rec := strings.ReplaceAll(fmt.Sprintf("%s", r), "\n", "\r\n")
+-	fmt.Fprintf(os.Stderr, "Caught panic:\r\n\r\n%s\r\n\r\nRestoring terminal...\r\n\r\n", rec)
+-	stack := strings.ReplaceAll(fmt.Sprintf("%s\n", debug.Stack()), "\n", "\r\n")
+-	fmt.Fprint(os.Stderr, stack)
+-	if v, err := strconv.ParseBool(os.Getenv("TEA_DEBUG")); err == nil && v {
+-		f, err := os.Create(fmt.Sprintf("bubbletea-panic-%d.log", time.Now().Unix()))
+-		if err == nil {
+-			defer f.Close()        //nolint:errcheck
+-			fmt.Fprintln(f, rec)   //nolint:errcheck
+-			fmt.Fprintln(f)        //nolint:errcheck
+-			fmt.Fprintln(f, stack) //nolint:errcheck
+-		}
+-	}
+-}
+-
+-// recoverFromGoPanic recovers from a goroutine panic, prints a stack trace and
+-// signals for the program to be killed and terminal restored to a usable state.
+-func (p *Program) recoverFromGoPanic(r interface{}) {
++	p.shutdown(true)
++}
++func (p *Program) recoverFromGoPanic(_ interface{}) {
+ 	select {
+ 	case p.errs <- ErrProgramPanic:
+ 	default:
+ 	}
+ 	p.cancel()
+-	// We use "\r\n" to ensure the output is formatted even when restoring the
+-	// terminal does not work or when raw mode is still active.
+-	rec := strings.ReplaceAll(fmt.Sprintf("%s", r), "\n", "\r\n")
+-	fmt.Fprintf(os.Stderr, "Caught panic:\r\n\r\n%s\r\n\r\nRestoring terminal...\r\n\r\n", rec)
+-	stack := strings.ReplaceAll(fmt.Sprintf("%s\n", debug.Stack()), "\n", "\r\n")
+-	fmt.Fprint(os.Stderr, stack)
+-	if v, err := strconv.ParseBool(os.Getenv("TEA_DEBUG")); err == nil && v {
+-		f, err := os.Create(fmt.Sprintf("bubbletea-panic-%d.log", time.Now().Unix()))
+-		if err == nil {
+-			defer f.Close()        //nolint:errcheck
+-			fmt.Fprintln(f, rec)   //nolint:errcheck
+-			fmt.Fprintln(f)        //nolint:errcheck
+-			fmt.Fprintln(f, stack) //nolint:errcheck
+-		}
+-	}
+ }
+ 
+ // ReleaseTerminal restores the original terminal state and cancels the input
+@@ -1384,7 +1356,7 @@
+ 	// process was at the foreground, in which case we may not have received
+ 	// SIGWINCH. Detect any size change now and propagate the new size as
+ 	// needed.
+-	go p.checkResize()
++	p.launch(func() { p.checkResize() })
+ 
+ 	// Flush queued commands.
+ 	return p.flush()
+@@ -1430,8 +1402,10 @@
+ 	p.once = sync.Once{}
+ 
+ 	// Start the renderer.
++	p.rendererLoopDone = make(chan struct{})
+ 	p.renderer.start()
+ 	go func() {
++		defer close(p.rendererLoopDone)
+ 		for {
+ 			select {
+ 			case <-p.rendererDone:
+@@ -1439,8 +1413,13 @@
+ 				return
+ 
+ 			case <-p.ticker.C:
+-				_ = p.flush()
+-				_ = p.renderer.flush(false)
++				if err := errors.Join(p.flush(), p.renderer.flush(false)); err != nil {
++					select {
++					case p.errs <- err:
++					default:
++					}
++					p.cancel()
++				}
+ 			}
+ 		}
+ 	}()
+@@ -1455,10 +1434,11 @@
+ 		p.rendererDone <- struct{}{}
+ 	})
+ 
++	<-p.rendererLoopDone
+ 	if !kill {
+ 		// flush locks the mutex
+-		_ = p.renderer.flush(true)
+-	}
+-
+-	_ = p.renderer.close()
+-}
++		p.shutdownErr = errors.Join(p.shutdownErr, p.renderer.flush(true))
++	}
++
++	p.shutdownErr = errors.Join(p.shutdownErr, p.renderer.close())
++}
+diff --git a/tty.go b/tty.go
+--- a/tty.go
++++ b/tty.go
+@@ -1,9 +1,10 @@
+ package tea
+ 
+ import (
++	"errors"
+ 	"fmt"
++	"github.com/muesli/cancelreader"
+ 	"os"
+-	"time"
+ 
+ 	uv "github.com/charmbracelet/ultraviolet"
+ 	"github.com/charmbracelet/x/term"
+@@ -18,7 +19,7 @@
+ 	suspendProcess()
+ 
+ 	_ = p.RestoreTerminal()
+-	go p.Send(ResumeMsg{})
++	p.launch(func() { p.Send(ResumeMsg{}) })
+ }
+ 
+ func (p *Program) initTerminal() error {
+@@ -32,9 +33,7 @@
+ // Bubble Tea program.
+ func (p *Program) restoreTerminalState() error {
+ 	// Flush queued commands.
+-	_ = p.flush()
+-
+-	return p.restoreInput()
++	return errors.Join(p.flush(), p.restoreInput())
+ }
+ 
+ // restoreInput restores the tty input to its original state.
+@@ -66,7 +65,11 @@
+ 	// raw mode.
+ 
+ 	var err error
+-	p.cancelReader, err = uv.NewCancelReader(p.input)
++	if reader, ok := p.input.(cancelreader.CancelReader); ok {
++		p.cancelReader = reader
++	} else {
++		p.cancelReader, err = uv.NewCancelReader(p.input)
++	}
+ 	if err != nil {
+ 		return fmt.Errorf("bubbletea: could not create cancelable reader: %w", err)
+ 	}
+@@ -95,13 +98,7 @@
+ 
+ // waitForReadLoop waits for the cancelReader to finish its read loop.
+ func (p *Program) waitForReadLoop() {
+-	select {
+-	case <-p.readLoopDone:
+-	case <-time.After(500 * time.Millisecond): //nolint:mnd
+-		// The read loop hangs, which means the input
+-		// cancelReader's cancel function has returned true even
+-		// though it was not able to cancel the read.
+-	}
++	<-p.readLoopDone
+ }
+ 
+ // checkResize detects the current size of the output and informs the program

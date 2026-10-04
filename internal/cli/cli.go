@@ -24,11 +24,16 @@ import (
 // with exclusive ownership
 // of writes/deadlines for the call. File deadlines are cleared before return.
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	args, _, verbose, help, commonErr := commonFlags(args)
+	if commonErr != nil {
+		finalDiagnostic(ctx, stderr, "mica-mesh: %v\n", commonErr)
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancelInvocation := context.WithCancel(ctx)
 	defer cancelInvocation()
-	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
+	if len(args) == 0 || len(args) == 1 && help {
 		release, err := bindOutput(ctx, stdout, stderr)
 		if err != nil {
 			return 1
@@ -45,6 +50,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return 0
 	}
 	c, err := parse(args)
+	c.verbose = c.verbose || verbose
 	if errors.Is(err, flag.ErrHelp) {
 		release, bindErr := bindOutput(ctx, stdout, stderr)
 		if bindErr != nil {
