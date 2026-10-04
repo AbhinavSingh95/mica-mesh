@@ -1,0 +1,24 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+py_binary(
+    name = "prepare_runtime",
+    srcs = ["prepare_runtime.py"],
+    python_version = "PY3",
+)
+
+py_test(
+    name = "release_test",
+    size = "small",
+    srcs = [
+        "prepare_runtime.py",
+        "test_prepare_runtime.py",
+    ],
+    main = "test_prepare_runtime.py",
+    python_version = "PY3",
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

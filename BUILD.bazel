@@ -30,11 +30,13 @@ filegroup(
         "//internal/runtime:format_srcs",
         "//internal/runtime/llamacpp:format_srcs",
         "//internal/runtime/llamacpp/testserver:format_srcs",
+        "//internal/setup:format_srcs",
         "//internal/testutil/fakeruntime:format_srcs",
         "//internal/worker:format_srcs",
         "//protocol/mesh/v1:format_srcs",
         "//tests/integration:format_srcs",
         "//third_party/patches:format_srcs",
+        "//tools/release:format_srcs",
     ],
 )
 

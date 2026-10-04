@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "setup",
+    srcs = ["release.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/setup",
+    visibility = ["//:__subpackages__"],
+    deps = ["@org_golang_x_sys//unix"],
+)
+
+go_test(
+    name = "setup_test",
+    size = "small",
+    srcs = ["release_test.go"],
+    embed = [":setup"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)
