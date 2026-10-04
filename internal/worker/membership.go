@@ -13,6 +13,7 @@ import (
 	meshv1 "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
@@ -90,7 +91,15 @@ func runMembership(ctx context.Context, svc *Service, endpoint string, resolve f
 				cleanupErr = errors.Join(cleanupErr, conn.Close())
 				conn = nil
 			}
-			conn, err = grpc.NewClient("passthrough:///"+target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(64*1024), grpc.MaxCallSendMsgSize(64*1024)))
+			// Membership owns the 1–10 second retry schedule. Bound transport
+			// backoff and stalled handshakes so gRPC's default 120-second/20-second
+			// waits cannot hide a reachable Controller behind that schedule.
+			transportBackoff := backoff.DefaultConfig
+			transportBackoff.MaxDelay = time.Second
+			conn, err = grpc.NewClient("passthrough:///"+target,
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+				grpc.WithConnectParams(grpc.ConnectParams{Backoff: transportBackoff, MinConnectTimeout: 2 * time.Second}),
+				grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(64*1024), grpc.MaxCallSendMsgSize(64*1024)))
 			if err == nil {
 				address = target
 			}
@@ -100,7 +109,9 @@ func runMembership(ctx context.Context, svc *Service, endpoint string, resolve f
 			for ctx.Err() == nil {
 				rpc, cancel := context.WithTimeout(ctx, 2*time.Second)
 				version := runtimeVersion()
-				response, registerErr := client.RegisterWorker(rpc, &meshv1.RegisterWorkerRequest{WorkerId: svc.id, Endpoint: endpoint, ProtocolMajor: protocol.Major, Hardware: svc.hardware, RuntimeVersion: version, Backend: svc.cfg.Backend, Model: &meshv1.ModelDescriptor{Id: svc.cfg.Model.ID, Sha256: svc.cfg.Model.SHA256, ContextTokens: uint32(svc.cfg.Model.ContextTokens)}, Capacity: 1, Report: svc.Report()})
+				// Idempotent registration may wait for the retained connection,
+				// but only within this RPC's existing two-second deadline.
+				response, registerErr := client.RegisterWorker(rpc, &meshv1.RegisterWorkerRequest{WorkerId: svc.id, Endpoint: endpoint, ProtocolMajor: protocol.Major, Hardware: svc.hardware, RuntimeVersion: version, Backend: svc.cfg.Backend, Model: &meshv1.ModelDescriptor{Id: svc.cfg.Model.ID, Sha256: svc.cfg.Model.SHA256, ContextTokens: uint32(svc.cfg.Model.ContextTokens)}, Capacity: 1, Report: svc.Report()}, grpc.WaitForReady(true))
 				cancel()
 				if registerErr != nil {
 					publish("", false)
