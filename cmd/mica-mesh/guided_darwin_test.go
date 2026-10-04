@@ -51,7 +51,7 @@ printf '%s\n' "$?" >&3
 read release <&4
 `
 			cmd := exec.Command("/bin/sh", "-c", script, "session-owner", binary)
-			cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_COLOR=1")
+			cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_COLOR=1", "HOME="+t.TempDir())
 			cmd.Stdin = slave
 			cmd.Stdout = slave
 			cmd.Stderr = slave

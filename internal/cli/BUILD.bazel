@@ -32,11 +32,13 @@ go_test(
     srcs = [
         "cli_test.go",
         "command_test.go",
+        "interactive_test.go",
         "mode_test.go",
         "setup_test.go",
     ],
     embed = [":cli"],
     deps = [
+        "//internal/app",
         "//internal/config",
         "//internal/protocol",
         "//internal/setup",

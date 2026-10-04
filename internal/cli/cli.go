@@ -33,7 +33,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	defer stop()
 	ctx, cancelInvocation := context.WithCancel(ctx)
 	defer cancelInvocation()
-	if len(args) == 0 || len(args) == 1 && help {
+	if len(args) == 0 || len(args) == 1 && help || len(args) > 0 && args[0] == "ui" && help {
 		release, err := bindOutput(ctx, stdout, stderr)
 		if err != nil {
 			return 1
@@ -126,6 +126,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 const usage = `mica-mesh — private LAN inference mesh
 
 Usage:
+  mica-mesh
+  mica-mesh ui
   mica-mesh controller [--local] [--plain] [options]
   mica-mesh agent [--local] [--plain] [options]
   mica-mesh setup [--yes]
@@ -134,6 +136,11 @@ Usage:
   mica-mesh start --worker [--controller-address HOST:PORT] [options]
   mica-mesh status [--controller-address HOST:PORT] [options]
   mica-mesh run [--controller-address HOST:PORT] [options] "prompt"
+
+On a terminal, mica-mesh opens the guided Controller / Agent picker.
+Use one role in each terminal. Agent guides missing model setup after consent.
+Each Controller prompt is a new request. History is not model context.
+Without a terminal, no arguments print help. --plain runs prepared services.
 
 ` + commandOptions + discoveryHelp
 
@@ -149,6 +156,8 @@ const commandOptions = `Options:
   --model ID                    Requested model ID
   --max-output-tokens N          1–512 (default 128)
   --timeout DURATION             Total run budget (default/maximum 300s)
+  --plain                        Use direct output; do not start the guided renderer
+  --verbose                      Show diagnostic details
   -h, --help                     Show this help
 
 `
@@ -160,7 +169,7 @@ If multicast is unavailable or several controllers are found, use an explicit ad
 func commandHelp(name string) string {
 	switch name {
 	case "controller", "agent":
-		return "Usage: mica-mesh " + name + " [--local] [--plain] [options]\nRun one role per terminal. Controller accepts requests through run.\nAgent owns the prepared runtime. No prompts or downloads in plain mode.\n--local uses loopback only: Controller 127.0.0.1:50051, Agent 127.0.0.1:50052.\n--plain runs foreground services.\n\n" + commandOptions + discoveryHelp
+		return "Usage: mica-mesh " + name + " [--local] [--plain] [options]\nRun one role per terminal. A usable terminal opens its guided screen.\nController accepts prompts. Agent guides setup and owns its runtime.\nPlain Controller accepts requests through run. No prompts or downloads in plain mode.\n--local uses loopback only: Controller 127.0.0.1:50051, Agent 127.0.0.1:50052.\n--plain runs foreground services.\n\n" + commandOptions + discoveryHelp
 	case "setup":
 		return "Usage: mica-mesh setup [--yes]\nPrepare the pinned model in your managed data folder.\nUse --yes to consent in scripts. Setup needs an installed native runtime bundle.\n"
 	case "doctor":
