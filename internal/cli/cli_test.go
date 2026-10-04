@@ -11,7 +11,7 @@ import (
 
 func TestHelp(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := cli.Main(context.Background(), []string{"--help"}, &out, &errOut); code != 0 {
+	if code := cli.Main(context.Background(), []string{"--help"}, nil, &out, &errOut); code != 0 {
 		t.Fatalf("help exit status = %d, want 0", code)
 	}
 	if !strings.Contains(out.String(), "mica-mesh") {
@@ -24,7 +24,7 @@ func TestHelp(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := cli.Main(context.Background(), []string{"unknown-command"}, &out, &errOut); code == 0 {
+	if code := cli.Main(context.Background(), []string{"unknown-command"}, nil, &out, &errOut); code == 0 {
 		t.Error("unknown command exit status = 0, want failure")
 	}
 	if !strings.Contains(errOut.String(), "unknown-command") || !strings.Contains(errOut.String(), "--help") {

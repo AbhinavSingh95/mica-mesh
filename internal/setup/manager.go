@@ -419,3 +419,16 @@ func verifyModel(ctx context.Context, file *os.File, model modelDescriptor) erro
 	}
 	return nil
 }
+
+// Download describes the fixed model operation shown before setup consent.
+// It contains no mutable manager state and does not access the filesystem.
+type Download struct {
+	ID, URL, Path string
+	SizeBytes     int64
+}
+
+// ModelDownload returns the compiled model identity and its managed destination.
+func ModelDownload(layout Layout) Download {
+	model := pinnedModel()
+	return Download{ID: model.id, URL: model.url, Path: filepath.Join(layout.DataRoot, "models", model.digest, "model.gguf"), SizeBytes: model.size}
+}

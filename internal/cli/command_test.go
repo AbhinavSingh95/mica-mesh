@@ -124,7 +124,7 @@ func serve(t *testing.T, s meshv1.ControllerServiceServer) string {
 func invoke(t *testing.T, s *streamController) (int, string, string) {
 	t.Helper()
 	var out, diag bytes.Buffer
-	code := Main(context.Background(), []string{"run", "--config", fileConfig(t, `{}`), "--controller-address", serve(t, s), "hello"}, &out, &diag)
+	code := Main(context.Background(), []string{"run", "--config", fileConfig(t, `{}`), "--controller-address", serve(t, s), "hello"}, nil, &out, &diag)
 	return code, out.String(), diag.String()
 }
 func TestRunSeparatesTextAndDiagnostics(t *testing.T) {
@@ -240,7 +240,7 @@ func (s *streamController) GetClusterStatus(context.Context, *meshv1.GetClusterS
 }
 func TestStatusUnknownStateIsUnavailable(t *testing.T) {
 	var out, diag bytes.Buffer
-	code := Main(context.Background(), []string{"status", "--config", fileConfig(t, `{}`), "--controller-address", serve(t, &streamController{})}, &out, &diag)
+	code := Main(context.Background(), []string{"status", "--config", fileConfig(t, `{}`), "--controller-address", serve(t, &streamController{})}, nil, &out, &diag)
 	if code != 0 || !strings.Contains(out.String(), "state=WORKER_STATE_UNAVAILABLE") {
 		t.Fatalf("code=%d output=%q diagnostic=%q", code, out.String(), diag.String())
 	}
@@ -255,7 +255,7 @@ func TestStatusHardwareAndActiveIdentity(t *testing.T) {
 	request := uuid.NewString()
 	s := &streamController{cluster: &meshv1.GetClusterStatusResponse{ControllerId: uuid.NewString(), Workers: []*meshv1.WorkerInfo{{WorkerId: uuid.NewString(), State: meshv1.WorkerState_WORKER_STATE_BUSY, Hardware: &meshv1.HardwareInfo{Cpu: &cpu, CpuCores: &cores, RamBytes: &ram, Gpu: &gpu, GpuMemoryBytes: &vram, UnifiedMemory: &unified}, Report: &meshv1.WorkerReport{Active: true, ActiveRequestId: &request}}, {WorkerId: uuid.NewString(), Hardware: &meshv1.HardwareInfo{}, Report: &meshv1.WorkerReport{}}}}}
 	var out, diag bytes.Buffer
-	code := Main(context.Background(), []string{"status", "--config", fileConfig(t, `{}`), "--controller-address", serve(t, s)}, &out, &diag)
+	code := Main(context.Background(), []string{"status", "--config", fileConfig(t, `{}`), "--controller-address", serve(t, s)}, nil, &out, &diag)
 	for _, want := range []string{`cpu="CPU\nquoted"`, `gpu="GPU\tquoted"`, "cpu_cores=8", "ram_bytes=16384", "dedicated_gpu_memory_bytes=8192", "unified_memory=true", "active_request_id=" + strconv.Quote(request), `cpu="unknown"`, "ram_bytes=unknown", "dedicated_gpu_memory_bytes=unknown", "unified_memory=unknown"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q from %q", want, out.String())

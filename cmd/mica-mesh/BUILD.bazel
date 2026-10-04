@@ -15,6 +15,9 @@ filegroup(
 go_library(
     name = "mica-mesh_lib",
     srcs = [
+        "input_darwin.go",
+        "input_linux.go",
+        "input_unix.go",
         "main.go",
         "output_unix.go",
     ],
@@ -42,6 +45,8 @@ go_library(
 go_test(
     name = "mica-mesh_test",
     srcs = [
+        "consent_darwin_test.go",
+        "input_test.go",
         "main_test.go",
         "output_test.go",
     ],
@@ -53,6 +58,7 @@ go_test(
     env = {"MICA_TEST_SERVER": "$(rlocationpath //internal/runtime/llamacpp/testserver)"},
     deps = [
         "//internal/protocol",
+        "//internal/setup",
         "//protocol/mesh/v1:mesh",
         "@com_github_google_uuid//:uuid",
         "@org_golang_google_grpc//:grpc",

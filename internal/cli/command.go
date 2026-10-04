@@ -14,6 +14,7 @@ import (
 
 	"github.com/AbhinavSingh95/mica-mesh/internal/config"
 	"github.com/AbhinavSingh95/mica-mesh/internal/discovery"
+	"github.com/AbhinavSingh95/mica-mesh/internal/doctor"
 	"github.com/AbhinavSingh95/mica-mesh/internal/protocol"
 	"github.com/AbhinavSingh95/mica-mesh/internal/setup"
 	meshv1 "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1"
@@ -23,22 +24,35 @@ import (
 )
 
 type command struct {
-	name, prompt string
-	cfg          config.Config
-	roles        config.Role
-	assets       config.AssetFields
+	name, prompt        string
+	cfg                 config.Config
+	roles               config.Role
+	assets              config.AssetFields
+	yes, probe, verbose bool
+	doctorRole          doctor.Role
 }
 
 func parse(args []string) (command, error) {
 	c := command{name: args[0]}
-	if c.name != "start" && c.name != "status" && c.name != "run" {
+	if c.name != "start" && c.name != "status" && c.name != "run" && c.name != "setup" && c.name != "doctor" {
 		return c, fmt.Errorf("unknown command %q; use --help for usage", c.name)
 	}
 	f := flag.NewFlagSet(c.name, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
+	if c.name == "setup" {
+		f.BoolVar(&c.yes, "yes", false, "prepare files without asking")
+		if err := f.Parse(args[1:]); err != nil {
+			return c, err
+		}
+		if f.NArg() != 0 {
+			return c, errors.New("unexpected positional arguments")
+		}
+		return c, nil
+	}
 	values := config.Default()
 	var path string
 	var controllerRole, workerRole bool
+	var doctorRole string
 	f.StringVar(&path, "config", "", "configuration file")
 	f.StringVar(&values.ControllerAddress, "controller-address", values.ControllerAddress, "controller HOST:PORT")
 	f.StringVar(&values.ControllerListen, "controller-listen", values.ControllerListen, "controller bind address")
@@ -51,12 +65,26 @@ func parse(args []string) (command, error) {
 	f.IntVar(&values.RuntimePort, "runtime-port", values.RuntimePort, "loopback runtime port")
 	f.IntVar(&values.MaxOutputTokens, "max-output-tokens", values.MaxOutputTokens, "output limit")
 	f.DurationVar(&values.Timeout, "timeout", values.Timeout, "total request budget")
+	if c.name == "doctor" {
+		f.StringVar(&doctorRole, "role", "agent", "agent, controller, or client")
+		f.BoolVar(&c.probe, "probe", false, "start and stop the Agent runtime")
+		f.BoolVar(&c.verbose, "verbose", false, "show diagnostic details")
+	}
 	if c.name == "start" {
 		f.BoolVar(&controllerRole, "controller", false, "controller role")
 		f.BoolVar(&workerRole, "worker", false, "worker role")
 	}
 	if err := f.Parse(args[1:]); err != nil {
 		return c, err
+	}
+	if c.name == "doctor" {
+		c.doctorRole = doctor.Role(doctorRole)
+		if c.doctorRole != doctor.Agent && c.doctorRole != doctor.Controller && c.doctorRole != doctor.Client {
+			return c, errors.New("doctor --role must be agent, controller, or client")
+		}
+		if c.probe && c.doctorRole != doctor.Agent {
+			return c, errors.New("doctor --probe requires --role agent")
+		}
 	}
 	if c.name == "run" {
 		if f.NArg() != 1 {
@@ -125,6 +153,9 @@ func parse(args []string) (command, error) {
 	c.cfg = cfg
 	c.assets = loaded.Assets
 	// Worker asset validation follows managed resolution in Main.
+	if c.name == "doctor" {
+		return c, nil
+	}
 	return c, config.Validate(cfg, c.roles&^config.RoleWorker)
 }
 

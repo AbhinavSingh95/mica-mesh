@@ -25,6 +25,7 @@ filegroup(
         "//internal/config:format_srcs",
         "//internal/controller:format_srcs",
         "//internal/discovery:format_srcs",
+        "//internal/doctor:format_srcs",
         "//internal/hardware:format_srcs",
         "//internal/protocol:format_srcs",
         "//internal/runtime:format_srcs",
