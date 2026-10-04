@@ -16,6 +16,7 @@ import (
 
 	"github.com/AbhinavSingh95/mica-mesh/internal/config"
 	"github.com/AbhinavSingh95/mica-mesh/internal/protocol"
+	"github.com/AbhinavSingh95/mica-mesh/internal/setup"
 	meshv1 "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -215,7 +216,7 @@ func TestWriteFailureCancelsRPC(t *testing.T) {
 	}
 }
 
-func TestDefaultConfigPath(t *testing.T) {
+func TestOldConfigPathPreserved(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".config", "mica-mesh")
 	if err := os.MkdirAll(path, 0700); err != nil {
@@ -338,5 +339,85 @@ func TestStatusPreservesEarlierCallerDeadline(t *testing.T) {
 	}
 	if remaining := <-server.remaining; remaining > 500*time.Millisecond {
 		t.Fatalf("extended caller deadline: %v", remaining)
+	}
+}
+
+func TestControllerNeedsNoManagedFiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, args := range [][]string{{"start", "--controller"}, {"run", "hello"}, {"status"}, {"start", "--controller=false", "--controller"}} {
+		c, err := parse(args)
+		if err != nil || c.cfg.RuntimeBinary != "" || c.cfg.ModelPath != "" {
+			t.Fatalf("command = %+v, %v", c, err)
+		}
+	}
+}
+
+func TestVisitedAssetFlagsPreservePresence(t *testing.T) {
+	for _, test := range []struct {
+		flag string
+		want config.AssetFields
+	}{
+		{"--runtime-binary", config.AssetFields{RuntimeBinary: true}},
+		{"--model-path", config.AssetFields{ModelPath: true}},
+	} {
+		c, err := parse([]string{"start", "--worker", "--config", fileConfig(t, `{}`), test.flag, ""})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.assets != test.want {
+			t.Fatalf("%s presence = %+v", test.flag, c.assets)
+		}
+		_, err = resolveWorkerConfig(context.Background(), c)
+		var unavailable *setup.ErrNotPrepared
+		if err == nil || errors.As(err, &unavailable) {
+			t.Fatalf("empty flag error = %v", err)
+		}
+	}
+	c, err := parse([]string{"start", "--worker", "--config", fileConfig(t, `{"backend":"metal","runtime_binary":"","model_path":""}`), "--backend", "cpu", "--runtime-binary", "/manual/server", "--model-path", "/manual/model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := resolveWorkerConfig(context.Background(), c)
+	if err != nil || c.assets != (config.AssetFields{RuntimeBinary: true, ModelPath: true, Backend: true}) || cfg.Backend != "cpu" || cfg.RuntimeBinary != "/manual/server" || cfg.ModelPath != "/manual/model" {
+		t.Fatalf("flag overrides = %+v, %v", c, err)
+	}
+}
+
+func TestWorkerMissingManagedFilesIsNotPrepared(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c, err := parse([]string{"start", "--worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolveWorkerConfig(context.Background(), c)
+	var unavailable *setup.ErrNotPrepared
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("missing managed files error = %v", err)
+	}
+}
+
+func TestManagedLayoutFollowsExecutableLink(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "bundle", "bin", "mica-mesh")
+	if err := os.MkdirAll(filepath.Dir(executable), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, []byte("fixture"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "mica-mesh")
+	if err := os.Symlink(executable, link); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := managedLayout(link, root)
+	wantRoot, wantErr := filepath.EvalSymlinks(filepath.Join(root, "bundle"))
+	if wantErr != nil {
+		t.Fatal(wantErr)
+	}
+	if err != nil || layout.ReleaseRoot != wantRoot || layout.DataRoot != filepath.Join(root, "Library", "Application Support", "Mica Mesh") {
+		t.Fatalf("layout = %+v, %v", layout, err)
+	}
+	if _, err := managedLayout(filepath.Join(root, "missing"), root); err == nil {
+		t.Fatal("accepted missing executable")
 	}
 }

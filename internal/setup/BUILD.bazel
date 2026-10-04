@@ -7,10 +7,14 @@ go_library(
         "manager.go",
         "receipt.go",
         "release.go",
+        "resolve.go",
     ],
     importpath = "github.com/AbhinavSingh95/mica-mesh/internal/setup",
     visibility = ["//:__subpackages__"],
-    deps = ["@org_golang_x_sys//unix"],
+    deps = [
+        "//internal/config",
+        "@org_golang_x_sys//unix",
+    ],
 )
 
 go_test(
@@ -20,9 +24,13 @@ go_test(
         "manager_test.go",
         "receipt_test.go",
         "release_test.go",
+        "resolve_test.go",
     ],
     embed = [":setup"],
-    deps = ["@org_golang_x_sys//unix"],
+    deps = [
+        "//internal/config",
+        "@org_golang_x_sys//unix",
+    ],
 )
 
 filegroup(

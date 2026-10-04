@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AbhinavSingh95/mica-mesh/internal/app"
+	"github.com/AbhinavSingh95/mica-mesh/internal/config"
 )
 
 // Main owns signal handling and returns a process exit status. It never closes
@@ -40,6 +41,9 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	c, err := parse(args)
+	if err == nil && c.roles&config.RoleWorker != 0 {
+		c.cfg, err = resolveWorkerConfig(ctx, c)
+	}
 	if err == nil && c.name == "run" {
 		if err := runInference(ctx, c.cfg, c.prompt, stdout, stderr, resolveController(c.cfg.ControllerAddress)); err != nil {
 			return 1

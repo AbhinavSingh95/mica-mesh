@@ -78,7 +78,7 @@ func TestStrictConfig(t *testing.T) {
 			if err != nil {
 				t.Fatalf("typed JSON must load before overrides: %v", err)
 			}
-			if err := config.Validate(cfg, config.RoleNone); err == nil {
+			if err := config.Validate(cfg.Config, config.RoleNone); err == nil {
 				t.Fatal("Validate accepted invalid configuration")
 			}
 		})
@@ -88,7 +88,7 @@ func TestStrictConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := config.Validate(cfg, config.RoleNone); err != nil {
+		if err := config.Validate(cfg.Config, config.RoleNone); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -100,16 +100,16 @@ func TestConfigPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ControllerAddress != "mesh.local:6000" || cfg.RuntimePort != 9000 || cfg.MaxOutputTokens != 0 || cfg.Timeout != 10*time.Second || cfg.ModelDescriptor.ContextTokens != 4096 || cfg.ModelDescriptor.ID != "qwen2.5-0.5b-instruct-q4_k_m" {
+	if cfg.Config.ControllerAddress != "mesh.local:6000" || cfg.Config.RuntimePort != 9000 || cfg.Config.MaxOutputTokens != 0 || cfg.Config.Timeout != 10*time.Second || cfg.Config.ModelDescriptor.ContextTokens != 4096 || cfg.Config.ModelDescriptor.ID != "qwen2.5-0.5b-instruct-q4_k_m" {
 		t.Errorf("file values/defaults lost: %+v", cfg)
 	}
-	cfg.MaxOutputTokens = 42
-	if err := config.Validate(cfg, config.RoleNone); err != nil {
+	cfg.Config.MaxOutputTokens = 42
+	if err := config.Validate(cfg.Config, config.RoleNone); err != nil {
 		t.Fatal(err)
 	}
 	missing := filepath.Join(t.TempDir(), "missing.json")
 	got, err := config.Load(missing, false)
-	if err != nil || got != config.Default() {
+	if err != nil || got.Config != config.Default() {
 		t.Errorf("optional missing file: %+v, %v", got, err)
 	}
 	if _, err := config.Load(missing, true); !errors.Is(err, os.ErrNotExist) {
@@ -154,10 +154,37 @@ func TestRoleValidation(t *testing.T) {
 func TestConfigSize(t *testing.T) {
 	contents := "{}" + strings.Repeat(" ", 64*1024-2)
 	cfg, err := config.Load(configFile(t, contents), true)
-	if err != nil || cfg != config.Default() {
+	if err != nil || cfg.Config != config.Default() {
 		t.Fatalf("64 KiB boundary: %+v, %v", cfg, err)
 	}
 	if _, err := config.Load(configFile(t, contents+" "), true); err == nil {
 		t.Fatal("Load accepted a configuration larger than 64 KiB")
+	}
+}
+
+func TestAssetFieldPresence(t *testing.T) {
+	for _, key := range []string{"runtime_binary", "RUNTIME_BINARY", "Runtime_Binary", "model_path", "MODEL_PATH", "backend", "BACKEND"} {
+		t.Run(key, func(t *testing.T) {
+			loaded, err := config.Load(configFile(t, `{"`+key+`":""}`), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := config.AssetFields{}
+			switch strings.ToLower(key) {
+			case "runtime_binary":
+				want.RuntimeBinary = true
+			case "model_path":
+				want.ModelPath = true
+			case "backend":
+				want.Backend = true
+			}
+			if loaded.Assets != want {
+				t.Fatalf("presence = %+v, want %+v", loaded.Assets, want)
+			}
+		})
+	}
+	loaded, err := config.Load(configFile(t, `{"runtime_binary":"/manual","runtime_binary":"","model_descriptor":{"id":"backend"}}`), true)
+	if err != nil || !loaded.Assets.RuntimeBinary || loaded.Assets.Backend || loaded.Config.RuntimeBinary != "" {
+		t.Fatalf("loaded = %+v, err = %v", loaded, err)
 	}
 }

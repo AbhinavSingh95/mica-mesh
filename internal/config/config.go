@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AbhinavSingh95/mica-mesh/internal/runtime"
@@ -65,29 +66,39 @@ func Default() Config {
 // This fixed schema needs little space; bound input before parsing to 64 KiB.
 const maxConfigBytes = 64 * 1024
 
+// AssetFields records explicit asset settings, including empty values.
+type AssetFields struct{ RuntimeBinary, ModelPath, Backend bool }
+
+// Loaded keeps configuration values and their asset field presence.
+type Loaded struct {
+	Config Config
+	Assets AssetFields
+}
+
 // Load overlays strictly typed JSON onto defaults. Only a missing optional file
 // is ignored. Semantic validation is deferred until explicitly visited CLI flags
 // have been applied, so typed file values (including zero) can be overridden.
-func Load(path string, required bool) (Config, error) {
+func Load(path string, required bool) (Loaded, error) {
 	cfg := Default()
 	file, err := os.Open(path)
 	if err != nil {
 		if !required && errors.Is(err, os.ErrNotExist) {
-			return cfg, nil
+			return Loaded{Config: cfg}, nil
 		}
-		return Config{}, fmt.Errorf("read configuration %q: %w", path, err)
+		return Loaded{}, fmt.Errorf("read configuration %q: %w", path, err)
 	}
 	data, readErr := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
 	if err := errors.Join(readErr, file.Close()); err != nil {
-		return Config{}, fmt.Errorf("read configuration %q: %w", path, err)
+		return Loaded{}, fmt.Errorf("read configuration %q: %w", path, err)
 	}
 	if len(data) > maxConfigBytes {
-		return Config{}, fmt.Errorf("configuration %q exceeds the 64 KiB input limit", path)
+		return Loaded{}, fmt.Errorf("configuration %q exceeds the 64 KiB input limit", path)
 	}
 	// encoding/json accepts null for scalar fields without changing their value;
 	// reject it explicitly so a mistyped setting cannot silently retain a default.
-	if err := rejectNull(data); err != nil {
-		return Config{}, fmt.Errorf("decode configuration %q: %w", path, err)
+	var assets AssetFields
+	if err := scanConfig(data, &assets); err != nil {
+		return Loaded{}, fmt.Errorf("decode configuration %q: %w", path, err)
 	}
 	decoded := struct {
 		*Config
@@ -96,24 +107,24 @@ func Load(path string, required bool) (Config, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&decoded); err != nil {
-		return Config{}, fmt.Errorf("decode configuration %q: %w", path, err)
+		return Loaded{}, fmt.Errorf("decode configuration %q: %w", path, err)
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		if err == nil {
 			err = errors.New("trailing JSON value")
 		}
-		return Config{}, fmt.Errorf("decode configuration %q: %w", path, err)
+		return Loaded{}, fmt.Errorf("decode configuration %q: %w", path, err)
 	}
 	cfg.Timeout, err = time.ParseDuration(decoded.Timeout)
 	if err != nil {
-		return Config{}, fmt.Errorf("decode configuration %q timeout: %w", path, err)
+		return Loaded{}, fmt.Errorf("decode configuration %q timeout: %w", path, err)
 	}
-	return cfg, nil
+	return Loaded{Config: cfg, Assets: assets}, nil
 }
 
-// Configuration has no nullable values. Scan each token rather than decoding
-// a map so null in an earlier duplicate member cannot be discarded.
-func rejectNull(data []byte) error {
+// Scan tokens for top-level presence and null values. A map would discard null
+// in an earlier duplicate member. Nested keys must not mark asset presence.
+func scanConfig(data []byte, assets *AssetFields) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	token, err := decoder.Token()
 	if err != nil {
@@ -122,6 +133,7 @@ func rejectNull(data []byte) error {
 	if token != json.Delim('{') {
 		return errors.New("configuration must be an object")
 	}
+	depth, key := 1, true
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
@@ -132,6 +144,34 @@ func rejectNull(data []byte) error {
 		}
 		if token == nil {
 			return errors.New("configuration values must not be null")
+		}
+		if depth == 1 && key {
+			if name, ok := token.(string); ok {
+				// Match encoding/json's accepted case variants at the top level.
+				switch {
+				case strings.EqualFold(name, "runtime_binary"):
+					assets.RuntimeBinary = true
+				case strings.EqualFold(name, "model_path"):
+					assets.ModelPath = true
+				case strings.EqualFold(name, "backend"):
+					assets.Backend = true
+				}
+				key = false
+				continue
+			}
+		}
+		if delimiter, ok := token.(json.Delim); ok {
+			switch delimiter {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+				if depth == 1 {
+					key = true
+				}
+			}
+		} else if depth == 1 {
+			key = true
 		}
 	}
 }

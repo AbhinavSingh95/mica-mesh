@@ -15,6 +15,7 @@ import (
 	"github.com/AbhinavSingh95/mica-mesh/internal/config"
 	"github.com/AbhinavSingh95/mica-mesh/internal/discovery"
 	"github.com/AbhinavSingh95/mica-mesh/internal/protocol"
+	"github.com/AbhinavSingh95/mica-mesh/internal/setup"
 	meshv1 "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -25,6 +26,7 @@ type command struct {
 	name, prompt string
 	cfg          config.Config
 	roles        config.Role
+	assets       config.AssetFields
 }
 
 func parse(args []string) (command, error) {
@@ -86,10 +88,11 @@ func parse(args []string) (command, error) {
 		}
 		path = filepath.Join(home, ".config", "mica-mesh", "config.json")
 	}
-	cfg, err := config.Load(path, required)
+	loaded, err := config.Load(path, required)
 	if err != nil {
 		return c, err
 	}
+	cfg := loaded.Config
 	f.Visit(func(v *flag.Flag) {
 		switch v.Name {
 		case "controller-address":
@@ -101,10 +104,13 @@ func parse(args []string) (command, error) {
 		case "advertise-address":
 			cfg.AdvertiseAddress = values.AdvertiseAddress
 		case "runtime-binary":
+			loaded.Assets.RuntimeBinary = true
 			cfg.RuntimeBinary = values.RuntimeBinary
 		case "model-path":
+			loaded.Assets.ModelPath = true
 			cfg.ModelPath = values.ModelPath
 		case "backend":
+			loaded.Assets.Backend = true
 			cfg.Backend = values.Backend
 		case "model":
 			cfg.Model = values.Model
@@ -117,7 +123,48 @@ func parse(args []string) (command, error) {
 		}
 	})
 	c.cfg = cfg
-	return c, config.Validate(cfg, c.roles)
+	c.assets = loaded.Assets
+	// Worker asset validation follows managed resolution in Main.
+	return c, config.Validate(cfg, c.roles&^config.RoleWorker)
+}
+
+// resolveWorkerConfig owns local managed resolution after argument parsing.
+func resolveWorkerConfig(ctx context.Context, c command) (config.Config, error) {
+	// Complete manual settings and explicit invalid paths need no bundle discovery.
+	if c.assets.RuntimeBinary && c.assets.ModelPath ||
+		c.assets.RuntimeBinary && !filepath.IsAbs(c.cfg.RuntimeBinary) ||
+		c.assets.ModelPath && !filepath.IsAbs(c.cfg.ModelPath) {
+		return c.cfg, config.Validate(c.cfg, c.roles)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return c.cfg, &setup.ErrNotPrepared{Cause: fmt.Errorf("find installed executable: %w", err)}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return c.cfg, &setup.ErrNotPrepared{Cause: fmt.Errorf("find managed data home: %w", err)}
+	}
+	layout, err := managedLayout(executable, home)
+	if err != nil {
+		return c.cfg, &setup.ErrNotPrepared{Cause: err}
+	}
+	cfg, err := setup.ResolveManaged(ctx, c.cfg, c.assets, layout)
+	if err != nil {
+		return cfg, err
+	}
+	return cfg, config.Validate(cfg, c.roles)
+}
+
+// managedLayout resolves the installed CLI link before selecting its bundle.
+func managedLayout(executable, home string) (setup.Layout, error) {
+	resolved, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return setup.Layout{}, fmt.Errorf("resolve installed CLI path: %w; reinstall the native package", err)
+	}
+	return setup.Layout{
+		ReleaseRoot: filepath.Dir(filepath.Dir(resolved)),
+		DataRoot:    filepath.Join(home, "Library", "Application Support", "Mica Mesh"),
+	}, nil
 }
 
 func resolveController(address string) func(context.Context) (string, error) {
