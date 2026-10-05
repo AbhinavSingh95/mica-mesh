@@ -300,7 +300,7 @@ func TestLocalAgentAddressChangeGivesRestartAction(t *testing.T) {
 	}
 	text := m.View().Content
 	if !strings.Contains(text, "127.0.0.1:50101") || !strings.Contains(text, "--controller-address") {
-		t.Fatal("local target/restart action absent")
+		t.Fatalf("local target/restart action absent:\n%s", text)
 	}
 }
 

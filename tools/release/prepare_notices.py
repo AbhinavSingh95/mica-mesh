@@ -28,6 +28,7 @@ ROOT_NOTICES = {
     'charm.land/lipgloss/v2': ['LICENSE'],
     'github.com/atotto/clipboard': ['LICENSE'],
     'github.com/charmbracelet/colorprofile': ['LICENSE'],
+    'github.com/charmbracelet/harmonica': ['LICENSE'],
     'github.com/charmbracelet/ultraviolet': ['LICENSE'],
     'github.com/charmbracelet/x/ansi': ['LICENSE'],
     'github.com/charmbracelet/x/term': ['LICENSE'],

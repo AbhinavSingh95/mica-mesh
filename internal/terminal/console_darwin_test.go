@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,6 +21,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/AbhinavSingh95/mica-mesh/internal/config"
 	"golang.org/x/sys/unix"
 )
 
@@ -239,6 +241,72 @@ func TestColorDisabledKeepsStateLabels(t *testing.T) {
 	}
 	if !strings.Contains(output, "Agent: waiting") || strings.Contains(output, "[31m") || strings.Contains(output, "38;2;") {
 		t.Fatalf("invalid no-color output: %q", output)
+	}
+}
+
+func TestRoleScreenColorPolicyThroughPTY(t *testing.T) {
+	for _, role := range []config.Role{config.RoleController, config.RoleWorker} {
+		for _, noColor := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%v/noColor=%v", role, noColor), func(t *testing.T) {
+				t.Setenv("TERM", "xterm-256color")
+				t.Setenv("NO_COLOR", "")
+				if !noColor {
+					if err := os.Unsetenv("NO_COLOR"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				master, _, fd := openPTY(t)
+				c, err := Open(fd, fd, fd)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer c.Close()
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				data := make(chan string, 1)
+				master.SetReadDeadline(time.Now().Add(3 * time.Second))
+				go func() {
+					var buf [8192]byte
+					var out strings.Builder
+					for out.Len() < 128*1024 {
+						n, err := master.Read(buf[:])
+						out.Write(buf[:n])
+						if strings.Contains(out.String(), "F3 Roles") || err != nil {
+							break
+						}
+					}
+					data <- out.String()
+				}()
+				var output string
+				received := false
+				m := newScreen(Options{Config: config.Default(), Role: role})
+				label := "Checking"
+				if role == config.RoleController {
+					m = readyScreen()
+					label = "1 ready"
+				}
+				err = c.run(ctx, m, func(ctx context.Context, p *tea.Program) error {
+					select {
+					case output = <-data:
+						received = true
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				})
+				if !received {
+					master.SetReadDeadline(time.Now())
+					output = <-data // Join the owned reader even after a failure.
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				colored := regexp.MustCompile(`\x1b\[[0-9;:]*[34]8[;:]`).MatchString(output)
+				if colored == noColor || !strings.Contains(output, "Mica Mesh") || !strings.Contains(output, label) || (noColor && strings.Contains(output, "\x1b]12;")) {
+					t.Fatalf("role labels or color policy lost (NO_COLOR=%v): %q", noColor, output)
+				}
+			})
+		}
 	}
 }
 func TestInputCancelJoinsReader(t *testing.T) {

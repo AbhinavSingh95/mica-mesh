@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"github.com/AbhinavSingh95/mica-mesh/internal/app"
@@ -104,6 +105,8 @@ type screen struct {
 	state                    sessionSnapshot
 	width, height, selection int
 	prompt                   textarea.Model
+	progress                 progress.Model
+	styles                   screenStyles
 	controls                 controls
 	mailbox                  *sessionMailbox
 	console                  *Console
@@ -124,9 +127,26 @@ func newScreen(o Options) *screen {
 	if o.Role != 0 {
 		phase = checking
 	}
-	return &screen{state: sessionSnapshot{network: o.Network, role: o.Role, phase: phase, cfg: o.Config, version: "development", now: time.Now()}, width: 80, height: 24, prompt: newPrompt(), controls: newControls()}
+	m := &screen{state: sessionSnapshot{network: o.Network, role: o.Role, phase: phase, cfg: o.Config, version: "development", now: time.Now()}, width: 80, height: 24, prompt: newPrompt(), progress: progress.New(progress.WithoutPercentage()), controls: newControls()}
+	m.setTheme(true)
+	m.resizeEditor()
+	return m
 }
-func (m *screen) Init() tea.Cmd { return nil }
+func (m *screen) Init() tea.Cmd { return tea.RequestBackgroundColor }
+
+func (m *screen) resizeEditor() {
+	width := max(1, m.width-4)
+	if m.roomy() {
+		width = max(1, width-4) // Border and one padding cell on each side.
+	}
+	m.prompt.SetWidth(width)
+	m.prompt.SetHeight(min(3, max(1, m.height-24)))
+	// Refresh wrapped viewport content before Bubbles positions the cursor.
+	// Size setters alone retain the old scroll bounds. A nil update starts no
+	// effects because this editor has no virtual cursor or viewport animation.
+	m.prompt, _ = m.prompt.Update(nil)
+	m.progress.SetWidth(min(40, max(1, m.width-8)))
+}
 func (m *screen) requestBusy() bool {
 	r := m.state.request
 	return r.id != "" && (!r.joined || r.cleanup == cleanupChecking)
@@ -159,10 +179,11 @@ func notifyModel(ch chan struct{}) {
 }
 func (m *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case tea.BackgroundColorMsg:
+		m.setTheme(v.IsDark())
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
-		m.prompt.SetWidth(max(1, v.Width-8))
-		m.prompt.SetHeight(min(4, max(1, v.Height-20)))
+		m.resizeEditor()
 	case observationMsg:
 		previous := m.state
 		m.state = m.mailbox.snapshot()
@@ -210,6 +231,10 @@ func (m *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "pgup" || key == "pgdown" {
 			step := max(1, m.height-10)
 			history := m.state.role == config.RoleController && !m.help && !m.diagnosis && !m.editing && m.state.phase != awaitingConsent && m.state.phase != choosingNetwork
+			if history {
+				_, _, _, rows := m.controllerLayout(max(0, m.height-4))
+				step = max(1, rows)
+			}
 			if (key == "pgup") == history {
 				m.scroll += step
 			} else {
@@ -290,7 +315,7 @@ func (m *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key == "f4" && m.state.role == config.RoleWorker && !m.state.agent.Membership.Registered {
 			if m.state.network == app.Local {
-				m.notice = "To change the local target, exit and run mica-mesh agent --local --controller-address 127.0.0.1:PORT."
+				m.notice = "To change the local target, exit and run:\nmica-mesh agent --local\n  --controller-address 127.0.0.1:PORT"
 				break
 			}
 			m.editing = true

@@ -102,7 +102,7 @@ read release <&4
 			master.SetReadDeadline(time.Now().Add(5 * time.Second))
 			var output strings.Builder
 			var buf [1024]byte
-			for !strings.Contains(output.String(), "Press Ctrl-C") {
+			for !strings.Contains(output.String(), "Ctrl-C or q") {
 				n, err := master.Read(buf[:])
 				output.Write(buf[:n])
 				if err != nil {

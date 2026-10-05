@@ -3,6 +3,7 @@ package main
 import (
 	"strconv"
 	"strings"
+	"testing"
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
@@ -12,10 +13,23 @@ import (
 // It is bounded to the fixture's largest terminal. Raw bytes are also retained
 // separately so escape-injection assertions do not depend on this decoder.
 type testScreen struct {
-	cells   [40][120]string
-	x, y    int
-	last    string
-	pending string
+	cells       [40][120]string
+	x, y        int
+	top, bottom int // Scroll region; a zero bottom means the full fixture height.
+	last        string
+	pending     string
+}
+
+func TestScreenReplaysRendererScrollRegion(t *testing.T) {
+	var s testScreen
+	s.write("\x1b[1;1HHeader\x1b[5;1HAgents  0 ready\x1b[6;1HFirst\x1b[7;1HSecond\x1b[12;1HFooter")
+	// The renderer inserts an Agent panel by scrolling only rows 6 through 11.
+	s.write("\x1b[6;11r\x1b[6;1H\x1b[3T\x1b[1;40r\x1b[5;9H1")
+	for row, want := range map[int]string{0: "Header", 4: "Agents  1 ready", 8: "First", 9: "Second", 11: "Footer"} {
+		if got := strings.TrimSpace(strings.Split(s.text(), "\n")[row]); got != want {
+			t.Errorf("row %d: got %q, want %q", row, got, want)
+		}
+	}
 }
 
 func (s *testScreen) write(data string) {
@@ -89,6 +103,10 @@ func (s *testScreen) write(data string) {
 }
 
 func (s *testScreen) csi(params string, command byte) {
+	bottom := s.bottom
+	if bottom == 0 {
+		bottom = len(s.cells)
+	}
 	parts := strings.Split(params, ";")
 	value := func(i, fallback int) int {
 		if i >= len(parts) {
@@ -101,6 +119,12 @@ func (s *testScreen) csi(params string, command byte) {
 		return n
 	}
 	switch command {
+	case 'r':
+		top, end := value(0, 1)-1, value(1, len(s.cells))
+		if top >= 0 && top < end-1 && end <= len(s.cells) {
+			s.top, s.bottom = top, end
+			s.x, s.y = 0, 0
+		}
 	case 'H', 'f':
 		s.y, s.x = min(max(value(0, 1)-1, 0), 39), min(max(value(1, 1)-1, 0), 119)
 	case 'A':
@@ -157,21 +181,27 @@ func (s *testScreen) csi(params string, command byte) {
 			s.cells[s.y][x] = ""
 		}
 	case 'L':
-		n := min(value(0, 1), 40-s.y)
-		copy(s.cells[s.y+n:], s.cells[s.y:40-n])
+		if s.y < s.top || s.y >= bottom {
+			return
+		}
+		n := min(value(0, 1), bottom-s.y)
+		copy(s.cells[s.y+n:bottom], s.cells[s.y:bottom-n])
 		clear(s.cells[s.y : s.y+n])
 	case 'M':
-		n := min(value(0, 1), 40-s.y)
-		copy(s.cells[s.y:], s.cells[s.y+n:])
-		clear(s.cells[40-n:])
+		if s.y < s.top || s.y >= bottom {
+			return
+		}
+		n := min(value(0, 1), bottom-s.y)
+		copy(s.cells[s.y:bottom], s.cells[s.y+n:bottom])
+		clear(s.cells[bottom-n : bottom])
 	case 'S':
-		n := min(value(0, 1), 40)
-		copy(s.cells[:], s.cells[n:])
-		clear(s.cells[40-n:])
+		n := min(value(0, 1), bottom-s.top)
+		copy(s.cells[s.top:bottom], s.cells[s.top+n:bottom])
+		clear(s.cells[bottom-n : bottom])
 	case 'T':
-		n := min(value(0, 1), 40)
-		copy(s.cells[n:], s.cells[:40-n])
-		clear(s.cells[:n])
+		n := min(value(0, 1), bottom-s.top)
+		copy(s.cells[s.top+n:bottom], s.cells[s.top:bottom-n])
+		clear(s.cells[s.top : s.top+n])
 	}
 }
 

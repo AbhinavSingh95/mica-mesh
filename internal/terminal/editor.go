@@ -12,6 +12,9 @@ import (
 func newPrompt() textarea.Model {
 	m := textarea.New()
 	m.SetVirtualCursor(false)
+	m.Prompt = "› "
+	m.Placeholder = "Type your prompt…"
+	m.ShowLineNumbers = false
 	m.CharLimit = 0
 	m.MaxHeight = 0
 	m.SetHeight(4)

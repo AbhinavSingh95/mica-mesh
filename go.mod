@@ -10,7 +10,10 @@ require (
 	google.golang.org/protobuf v1.36.10
 )
 
-require github.com/atotto/clipboard v0.1.4 // indirect
+require (
+	github.com/atotto/clipboard v0.1.4 // indirect
+	github.com/charmbracelet/harmonica v0.2.0 // indirect
+)
 
 require (
 	charm.land/bubbles/v2 v2.2.1
@@ -18,7 +21,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886
-	github.com/charmbracelet/x/ansi v0.11.8 // indirect
+	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
