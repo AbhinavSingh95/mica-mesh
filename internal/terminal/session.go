@@ -408,7 +408,7 @@ func (s *session) completeOperation(r operationResult) {
 		s.lastPoll = time.Time{}
 		s.startPoll()
 	default:
-		s.state.notice = r.diagnosis
+		s.state.diagnosis = r.diagnosis
 	}
 	s.publish()
 }
@@ -480,7 +480,7 @@ func (s *session) prepare() {
 func (s *session) fail(err error) {
 	s.state.phase = failed
 	s.state.status = nil
-	s.state.notice = cleanText(err.Error()) + "\nPress F5 to retry, F2 to diagnose, or F3 to choose a role."
+	s.state.notice = cleanText(err.Error()) + "\nUse /retry, /doctor, or /roles."
 	s.publish()
 }
 func (s *session) handle(ctx context.Context, a action) error {
@@ -582,10 +582,12 @@ func (s *session) handle(ctx context.Context, a action) error {
 		s.submit(a.value)
 	case diagnose:
 		if s.operation != nil {
-			s.state.notice = "A check is in progress. Wait, then press F2 again."
+			s.state.diagnosis = "A check is in progress. Wait, then use /doctor again."
 			s.publish()
 			return nil
 		}
+		s.state.diagnosis = "Checking local configuration and files…"
+		s.publish()
 		s.operation = make(chan operationResult, 1)
 		out := s.operation
 		o := s.options

@@ -39,6 +39,7 @@ func (m *screen) setTheme(dark bool) {
 	// Keep the user's terminal cursor color in both themes.
 	styles.Cursor.Color = nil
 	m.prompt.SetStyles(styles)
+	m.command.SetStyles(styles)
 	m.progress.FullColor, m.progress.EmptyColor = accent, border
 }
 

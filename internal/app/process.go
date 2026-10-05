@@ -31,9 +31,9 @@ type Options struct {
 
 // AgentStatus is a copied local snapshot. Runtime and membership are independent.
 type AgentStatus struct {
-	WorkerID, Endpoint string
-	Report             *meshv1.WorkerReport
-	Membership         worker.MembershipStatus
+	WorkerID, Hostname, Endpoint string
+	Report                       *meshv1.WorkerReport
+	Membership                   worker.MembershipStatus
 }
 
 // Process owns the services started by Start. Close or parent cancellation stops
@@ -46,6 +46,7 @@ type Process struct {
 	controllerAddress string
 	worker            *worker.Service
 	workerID          string
+	hostname          string
 	mu                sync.Mutex
 	endpoint          string
 	membership        worker.MembershipStatus
@@ -61,7 +62,7 @@ func (p *Process) AgentStatus() (AgentStatus, bool) {
 		return AgentStatus{}, false
 	}
 	p.mu.Lock()
-	s := AgentStatus{WorkerID: p.workerID, Endpoint: p.endpoint, Membership: p.membership}
+	s := AgentStatus{WorkerID: p.workerID, Hostname: p.hostname, Endpoint: p.endpoint, Membership: p.membership}
 	p.mu.Unlock()
 	s.Report = p.worker.Report()
 	return s, true

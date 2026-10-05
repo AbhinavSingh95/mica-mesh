@@ -141,6 +141,7 @@ func TestUnknownAgentMetadataCannotEnablePrompt(t *testing.T) {
 	if m.canSubmit() {
 		t.Fatal("unknown state enabled inference")
 	}
+	m.activateCommand("agents")
 	text := m.View().Content
 	if !strings.Contains(text, "unknown-agent") || !strings.Contains(text, "Unavailable") {
 		t.Fatal("unknown metadata has no readable fallback")

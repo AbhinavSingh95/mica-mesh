@@ -181,7 +181,7 @@ func TestStockGuidedSetupFailureKeepsRecoveryScreen(t *testing.T) {
 	p.send("y")
 	proxy.await(t)
 	p.await("Failed")
-	p.await("F5 to retry")
+	p.await("/retry")
 	noActivatedSetup(t, home)
 	p.clear()
 	p.send("\x1b[15~") // F5: retry re-checks files and obtains consent again.

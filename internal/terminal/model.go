@@ -82,6 +82,7 @@ type sessionSnapshot struct {
 	phase                     flow
 	cfg                       config.Config
 	endpoint, version, notice string
+	diagnosis                 string
 	status                    *meshv1.GetClusterStatusResponse
 	statusAt, now             time.Time
 	statusError               bool
@@ -105,12 +106,16 @@ type screen struct {
 	state                    sessionSnapshot
 	width, height, selection int
 	prompt                   textarea.Model
+	command                  textarea.Model
 	progress                 progress.Model
 	styles                   screenStyles
 	controls                 controls
 	mailbox                  *sessionMailbox
 	console                  *Console
-	help, diagnosis          bool
+	panelKind                panelKind
+	menu                     bool
+	menuSelection            int
+	logsPaused               bool
 	input                    actionKind
 	editing                  bool
 	notice, diagnostics      string
@@ -120,6 +125,7 @@ type screen struct {
 	scroll                   int
 	pendingSubmission        uint64
 	previousRequest          string
+	clearedRequest           string
 }
 
 func newScreen(o Options) *screen {
@@ -128,6 +134,10 @@ func newScreen(o Options) *screen {
 		phase = checking
 	}
 	m := &screen{state: sessionSnapshot{network: o.Network, role: o.Role, phase: phase, cfg: o.Config, version: "development", now: time.Now()}, width: 80, height: 24, prompt: newPrompt(), progress: progress.New(progress.WithoutPercentage()), controls: newControls()}
+	m.command = newPrompt()
+	m.command.Prompt = "/"
+	m.command.Placeholder = "Type a command"
+	m.command.SetHeight(1)
 	m.setTheme(true)
 	m.resizeEditor()
 	return m
@@ -145,6 +155,9 @@ func (m *screen) resizeEditor() {
 	// Size setters alone retain the old scroll bounds. A nil update starts no
 	// effects because this editor has no virtual cursor or viewport animation.
 	m.prompt, _ = m.prompt.Update(nil)
+	m.command.SetWidth(width)
+	m.command.SetHeight(1)
+	m.command, _ = m.command.Update(nil)
 	m.progress.SetWidth(min(40, max(1, m.width-8)))
 }
 func (m *screen) requestBusy() bool {
@@ -207,6 +220,10 @@ func (m *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if previous.role != m.state.role || previous.phase != m.state.phase {
 			m.selection = 0
 		}
+		if previous.role != m.state.role {
+			m.openPanel(homePanel)
+			m.prompt.Reset()
+		}
 		choices := len(m.state.candidates)
 		if m.state.phase == choosingNetwork {
 			choices = len(m.state.interfaces)
@@ -214,8 +231,9 @@ func (m *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selection = min(m.selection, max(0, choices-1))
 	case diagnosticsMsg:
 		if m.console != nil {
-			m.diagnostics = m.console.diagnostics.text()
-			m.notice = "Input or service notice. Press F2 for details."
+			if !m.logsPaused {
+				m.diagnostics = m.console.diagnostics.text()
+			}
 			if strings.Contains(m.diagnostics, "Input rejected.") {
 				m.notice = "Input rejected. Use at most 16 KiB per paste and shorter terminal sequences."
 			}
@@ -228,50 +246,69 @@ func (m *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.interrupt()
 			break
 		}
+		if m.menu {
+			m.menuKey(v)
+			break
+		}
+		if key == "/" && !m.editing && (m.panelKind != homePanel || m.state.role != config.RoleController || m.prompt.Value() == "" || m.requestBusy()) {
+			m.menu = true
+			m.menuSelection = 0
+			m.command.Reset()
+			m.notice = ""
+			break
+		}
+		if m.panelKind == logsPanel && key == "end" {
+			m.openPanel(logsPanel)
+			break
+		}
 		if key == "pgup" || key == "pgdown" {
 			step := max(1, m.height-10)
-			history := m.state.role == config.RoleController && !m.help && !m.diagnosis && !m.editing && m.state.phase != awaitingConsent && m.state.phase != choosingNetwork
+			history := m.state.role == config.RoleController && m.panelKind == homePanel && !m.editing && m.state.phase != awaitingConsent && m.state.phase != choosingNetwork
 			if history {
 				_, _, _, rows := m.controllerLayout(max(0, m.height-4))
 				step = max(1, rows)
 			}
-			if (key == "pgup") == history {
+			if (key == "pgup") == (history || m.panelKind == logsPanel) {
 				m.scroll += step
 			} else {
 				m.scroll = max(0, m.scroll-step)
 			}
+			if m.panelKind == logsPanel {
+				m.logsPaused = m.scroll > 0
+				if !m.logsPaused {
+					m.openPanel(logsPanel)
+				}
+			}
 			break
 		}
 		if key == "f1" {
-			m.help = !m.help
-			m.scroll = 0
+			if m.panelKind == helpPanel {
+				m.openPanel(homePanel)
+			} else {
+				m.activateCommand("help")
+			}
 			break
 		}
 		if key == "esc" {
-			m.help = false
-			m.diagnosis = false
-			m.editing = false
+			m.openPanel(homePanel)
 			m.selection = 0
 			break
 		}
-		if m.help {
-			break
-		}
 		if key == "f2" {
-			m.diagnosis = !m.diagnosis
-			m.scroll = 0
-			if m.diagnosis {
-				m.send(action{kind: diagnose})
+			if m.panelKind == diagnosisPanel {
+				m.openPanel(homePanel)
+			} else {
+				m.activateCommand("doctor")
 			}
 			break
 		}
 		if key == "f3" {
 			if m.state.phase != stopping {
-				m.send(action{kind: returnToPicker})
+				m.activateCommand("roles")
 			}
 			break
 		}
-		if m.diagnosis {
+		if m.panelKind != homePanel {
 			break
 		}
 		if m.editing {
@@ -310,23 +347,15 @@ func (m *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		if key == "f5" {
-			m.send(action{kind: retry})
+			m.activateCommand("retry")
 			break
 		}
 		if key == "f4" && m.state.role == config.RoleWorker && !m.state.agent.Membership.Registered {
-			if m.state.network == app.Local {
-				m.notice = "To change the local target, exit and run:\nmica-mesh agent --local\n  --controller-address 127.0.0.1:PORT"
-				break
-			}
-			m.editing = true
-			m.input = changeAddress
-			m.prompt.Reset()
+			m.activateCommand("controller")
 			break
 		}
 		if key == "f6" && m.state.role == config.RoleWorker {
-			m.editing = true
-			m.input = changePort
-			m.prompt.Reset()
+			m.activateCommand("port")
 			break
 		}
 		choices := len(m.state.interfaces)
@@ -386,7 +415,11 @@ func (m *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Wait for a ready Agent before sending a prompt."
 		}
 	case tea.PasteMsg:
-		if m.editing || m.canSubmit() {
+		if m.menu {
+			m.updateCommand(v)
+			break
+		}
+		if m.editing || m.panelKind == homePanel && m.canSubmit() {
 			var accepted bool
 			m.prompt, accepted = updatePrompt(m.prompt, v)
 			if !accepted {
@@ -413,19 +446,23 @@ func (m *screen) interrupt() {
 }
 func (m *screen) consume() {
 	r := m.state.request
-	if r.id == "" {
+	if r.id == "" || r.id == m.clearedRequest {
 		return
 	}
 	if len(m.records) == 0 || m.records[len(m.records)-1].id != r.id {
 		m.records = append(m.records, record{id: r.id, prompt: cleanText(r.prompt)})
 		m.clean = sanitizer{}
-		m.scroll = 0
+		if m.panelKind == homePanel {
+			m.scroll = 0
+		}
 	}
 	rec := &m.records[len(m.records)-1]
 	if r.text != nil {
 		rec.response += m.clean.text(r.text.drain())
 	}
-	rec.worker = cleanText(r.hostname)
+	if r.workerID != "" {
+		rec.worker = agentName(r.workerID)
+	}
 	rec.finish = r.finish
 	rec.failure = cleanText(r.failure)
 	rec.cleanup = r.cleanup

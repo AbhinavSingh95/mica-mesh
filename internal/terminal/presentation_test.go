@@ -43,6 +43,7 @@ func TestControllerDistinguishesAgentsOnTheSameHost(t *testing.T) {
 	}
 	a.Endpoint, b.Endpoint = "127.0.0.1:50052", "127.0.0.1:50057"
 	m.state.status.Workers = []*meshv1.WorkerInfo{a, b}
+	m.activateCommand("agents")
 	text := ansi.Strip(m.View().Content)
 	for _, want := range []string{a.Endpoint, b.Endpoint, "2 ready"} {
 		if !strings.Contains(text, want) {
@@ -54,6 +55,8 @@ func TestControllerDistinguishesAgentsOnTheSameHost(t *testing.T) {
 func TestAgentShowsDistinctRuntimeAndMembershipEndpoints(t *testing.T) {
 	m := newScreen(Options{Config: config.Default(), Role: config.RoleWorker})
 	m.state.phase = running
+	m.state.statusAt = m.state.now
+	m.activateCommand("status")
 	m.state.cfg.RuntimePort = 8081
 	m.state.agent.Endpoint = "127.0.0.1:50057"
 	m.state.agent.Membership.ControllerAddress = "127.0.0.1:50051"
@@ -147,8 +150,8 @@ func TestDiagnosisKeepsCurrentHealthAndExpiresOldStatus(t *testing.T) {
 		m.state.role = role
 		m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 		m.state.agent.Report = &meshv1.WorkerReport{RuntimeState: meshv1.RuntimeState_RUNTIME_STATE_READY}
-		m.diagnosis = true
-		m.state.notice = "configuration · passed"
+		m.panelKind = diagnosisPanel
+		m.state.diagnosis = "configuration · passed"
 		if text := ansi.Strip(m.View().Content); !strings.Contains(text, "Ready") || !strings.Contains(text, "configuration · passed") {
 			t.Fatalf("diagnosis lost health or checks: %s", text)
 		}
@@ -193,9 +196,9 @@ func TestRolePanelsFitSmallAndLargeTerminals(t *testing.T) {
 						m.state.phase = preparing
 						m.state.progress = setup.Progress{Phase: setup.Downloading, CompletedBytes: 25000000, TotalBytes: 100000000}
 					case "help":
-						m.help = true
+						m.panelKind = helpPanel
 					case "diagnosis":
-						m.diagnosis = true
+						m.panelKind = diagnosisPanel
 						m.diagnostics = strings.Repeat("Diagnostic information\n", 40)
 					case "edit":
 						m.editing = true
@@ -252,10 +255,14 @@ func TestCompactControllerKeepsStreamingTextAndHistory(t *testing.T) {
 			t.Errorf("compact stream missing %q:\n%s", want, text)
 		}
 	}
-	for _, want := range []string{"first text", "Agent Mac", "ORIGINAL INPUT"} {
+	seen := text
+	for range 4 {
 		m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
-		if text := ansi.Strip(m.View().Content); !strings.Contains(text, want) {
-			t.Fatalf("compact history skipped %q:\n%s", want, text)
+		seen += "\n" + ansi.Strip(m.View().Content)
+	}
+	for _, want := range []string{"first text", "Agent Mac", "ORIGINAL INPUT"} {
+		if !strings.Contains(seen, want) {
+			t.Fatalf("compact history skipped %q:\n%s", want, seen)
 		}
 	}
 }

@@ -271,7 +271,7 @@ func TestRoleScreenColorPolicyThroughPTY(t *testing.T) {
 					for out.Len() < 128*1024 {
 						n, err := master.Read(buf[:])
 						out.Write(buf[:n])
-						if strings.Contains(out.String(), "F3 Roles") || err != nil {
+						if strings.Contains(out.String(), "/ Commands") || err != nil {
 							break
 						}
 					}

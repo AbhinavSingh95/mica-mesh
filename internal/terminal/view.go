@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/AbhinavSingh95/mica-mesh/internal/app"
@@ -40,20 +41,24 @@ func (m *screen) View() tea.View {
 	var body string
 	var cursor *tea.Cursor
 	switch {
-	case m.help:
-		text := m.section("Help") + "\n\nRun one role in each terminal.\nController accepts prompts. Agent owns the runtime.\nEach prompt is a new request. History is not model context.\n\nEnter  Send or select\nCtrl-J  New line\nCtrl-C  Cancel request; exit when idle\nPgUp/PgDn  Scroll history or panel details\nF2  Local diagnosis and service notices\nF3  Stop this role and return to roles\nF4  Enter a Controller address (LAN Agent)\nF5  Retry after a failure\nF6  Change runtime port (restarts owned Agent)"
-		if m.state.role == config.RoleWorker && m.state.network == app.Local {
-			text += "\n\nTo change the local Controller address, exit and run:\nmica-mesh agent --local\n  --controller-address 127.0.0.1:PORT"
-		}
-		body = m.panel(text, "PgUp/PgDn Details · Esc Back · Ctrl-C Exit", budget)
-	case m.diagnosis:
-		body = m.panel(m.section("Diagnosis")+"\n"+m.diagnosisStatus()+"\n\n"+cleanText(m.state.notice)+"\n"+suffix(m.diagnostics, 8192), "PgUp/PgDn Details · Esc Back · Ctrl-C Exit", budget)
+	case m.menu:
+		body, cursor = m.commandMenuView(budget)
+	case m.panelKind == helpPanel:
+		body = m.panel(m.helpView(), "PgUp/PgDn Scroll · / Commands\nEsc Back · Ctrl-C Cancel/exit", budget)
+	case m.panelKind == diagnosisPanel:
+		body = m.panel(m.section("Diagnosis")+"\n"+m.diagnosisStatus()+"\n"+cleanText(m.state.notice)+"\n\n"+cleanText(m.state.diagnosis), "PgUp/PgDn Scroll · / Commands\nEsc Back · Ctrl-C Cancel/exit", budget)
+	case m.panelKind == statusPanel:
+		body = m.panel(m.statusView(), "PgUp/PgDn Scroll · / Commands\nEsc Back · Ctrl-C Cancel/exit", budget)
+	case m.panelKind == agentsPanel:
+		body = m.panel(m.agentsView(), "PgUp/PgDn Scroll · / Commands\nEsc Back · Ctrl-C Cancel/exit", budget)
+	case m.panelKind == logsPanel:
+		body = m.logsView(budget)
 	case m.editing:
 		label := "Controller address (HOST:PORT)"
 		if m.input == changePort {
 			label = "Runtime port (1–65535)"
 		}
-		body, cursor = m.editorView(label)
+		body, cursor = m.editorView(label, m.prompt)
 		body += "\n" + m.styles.muted.Render("Enter Apply · Esc Back")
 	case m.state.phase == picking:
 		body = m.pickerView(budget)
@@ -116,8 +121,14 @@ func (m *screen) wrap(s string) string {
 }
 func (m *screen) panel(text, footer string, budget int) string {
 	foot := m.wrap(m.styles.muted.Render(footer))
+	if m.panelKind != homePanel {
+		foot = m.detailFooter(footer)
+	}
 	lines := strings.Split(m.wrap(strings.TrimSpace(text)), "\n")
 	room := max(0, budget-lipgloss.Height(foot))
+	if room == 0 {
+		return foot
+	}
 	start := min(m.scroll, max(0, len(lines)-room))
 	end := min(len(lines), start+room)
 	content := lipgloss.NewStyle().Height(room).Render(strings.Join(lines[start:end], "\n"))
@@ -130,10 +141,10 @@ func (m *screen) card(content string) string {
 
 // editorView returns the cursor relative to its own layout. Explicit offsets
 // keep it aligned through borders, Unicode text, wrapping, and terminal resize.
-func (m *screen) editorView(label string) (string, *tea.Cursor) {
+func (m *screen) editorView(label string, editor textarea.Model) (string, *tea.Cursor) {
 	label = m.wrap(m.styles.accent.Render(label))
-	input := m.prompt.View()
-	cursor := m.prompt.Cursor()
+	input := editor.View()
+	cursor := editor.Cursor()
 	if m.roomy() {
 		input = m.card(input)
 		if cursor != nil {
@@ -202,58 +213,24 @@ func (m *screen) cleanupNotice() string {
 // controllerLayout shares the actual history height with keyboard paging.
 // This keeps every retained line reachable when notices or resize reduce it.
 func (m *screen) controllerLayout(budget int) (header, input string, cursor *tea.Cursor, historyRows int) {
-	ready, busy := 0, 0
-	var agents []string
-	fresh := capacityFresh(m.state.statusAt, m.state.now)
-	if m.state.status != nil {
-		for _, w := range m.state.status.Workers {
-			if w == nil {
-				continue
-			}
-			label := "Unavailable"
-			if fresh && eligible(w, m.state.cfg.Model) {
-				label = "Ready"
-				ready++
-			} else if fresh && w.State == meshv1.WorkerState_WORKER_STATE_BUSY {
-				label = "Busy"
-				busy++
-			}
-			name := w.GetHardware().GetHostname()
-			if name == "" {
-				name = w.WorkerId
-			}
-			agents = append(agents, m.statusLabel(label)+"  "+cleanText(name)+" · "+cleanText(w.Endpoint))
-		}
-	}
-	endpoint := m.state.endpoint
-	if endpoint == "" {
-		endpoint = m.listener()
-	}
-	header = "Endpoint  " + cleanText(endpoint) + "\n" + m.styles.ready.Render(fmt.Sprintf("Agents  %d ready", ready)) + m.styles.muted.Render(fmt.Sprintf(" · %d busy", busy))
+	header = m.agentCounts()
 	if m.state.phase != running {
 		header += " · " + m.statusLabel(m.phaseLabel())
 		if m.state.phase != failed {
 			header += " " + m.styles.waiting.Render(m.activity())
 		}
 	}
-	if m.roomy() && len(agents) > 0 {
-		agentRows := strings.Join(agents[:min(2, len(agents))], "\n")
-		if len(agents) > 2 {
-			agentRows += m.styles.muted.Render(fmt.Sprintf("\n+ %d more Agents", len(agents)-2))
-		}
-		header += "\n" + m.card(agentRows)
-	}
 	header += "\n" + m.styles.muted.Render("Each prompt is a new request.")
 	if notice := m.cleanupNotice(); notice != "" {
-		header = m.styles.waiting.Render("Cleanup unconfirmed · F1 Help") + "\n" + header
+		header = m.styles.waiting.Render("Cleanup unconfirmed · /help") + "\n" + header
 	}
 	if m.state.statusError {
-		header = m.styles.failure.Render("Status unavailable · F2 Diagnose") + "\n" + header
+		header = m.styles.failure.Render("Status unavailable · /doctor") + "\n" + header
 	}
 	if m.notice != "" {
-		header += "\n" + cleanText(m.notice)
+		header += "\n" + cleanText(firstLine(m.notice))
 	} else if m.state.notice != "" {
-		header += "\n" + cleanText(m.state.notice)
+		header += "\n" + cleanText(firstLine(m.state.notice))
 	}
 	label := "Enter a prompt"
 	if !m.canSubmit() {
@@ -265,17 +242,13 @@ func (m *screen) controllerLayout(budget int) (header, input string, cursor *tea
 			label = m.activity() + " Stopping · checking Agent cleanup"
 		}
 	}
-	footer := "Enter Send · Ctrl-C Cancel/exit\nCtrl-J New line · F1 Help · F3 Roles"
-	if m.width >= 60 {
-		footer = "Enter Send · Ctrl-J New line · Ctrl-C Cancel/exit\nPgUp/PgDn History · F1 Help · F2 Diagnose · F3 Roles"
-	}
+	footer := "Enter Send · / Commands · Ctrl-C Cancel/exit"
 	if m.requestBusy() {
-		footer = "Ctrl-C Cancel request · F1 Help\nPgUp/PgDn History · F2 Diagnose · F3 Roles"
-		if m.width < 60 {
-			footer = "Ctrl-C Cancel · F1 Help · F3 Roles\nPgUp/PgDn History · F2 Diagnose"
-		}
+		footer = "PgUp History · / Commands · Ctrl-C"
+	} else if m.state.phase == failed {
+		footer = "/retry · /doctor · /roles\n/ Commands · Ctrl-C Exit"
 	}
-	input, cursor = m.editorView(label)
+	input, cursor = m.editorView(label, m.prompt)
 	if !m.canSubmit() {
 		cursor = nil
 	}
@@ -414,44 +387,33 @@ func (m *screen) agentStatusView() string {
 }
 
 func (m *screen) agentView(budget int) string {
-	endpoint := m.state.agent.Endpoint
-	if endpoint == "" {
-		endpoint = m.listener()
-	}
-	model := m.state.cfg.Model
-	if model == config.Default().Model {
-		model = "Qwen2.5 0.5B"
-	}
 	out := m.agentStatusView()
+	if m.state.agent.WorkerID != "" {
+		out = m.styles.accent.Bold(true).Render(agentName(m.state.agent.WorkerID)) + "\n" + out
+	}
 	if m.roomy() {
 		out = m.card(out)
 	}
 	if m.state.phase == preparing {
 		out += "\n" + m.preparationView()
 	}
-	out += "\nModel  " + cleanText(model) + "\nAgent listen  " + cleanText(endpoint)
-	out += fmt.Sprintf("\nRuntime address  127.0.0.1:%d", m.state.cfg.RuntimePort)
-	controller := m.state.agent.Membership.ControllerAddress
-	if controller == "" {
-		controller = m.state.cfg.ControllerAddress
+	if m.state.phase != running {
+		out += "\n" + m.agentDetails()
 	}
-	if controller == "" {
-		controller = "Not selected"
-	}
-	out += "\nController address  " + cleanText(controller)
 	if m.state.agent.Report != nil && m.state.agent.Report.LastError != "" {
-		out += "\n" + m.styles.failure.Render(cleanText(m.state.agent.Report.LastError)) + "\nF6 Change runtime port"
+		out += "\n" + m.styles.failure.Render(cleanText(m.state.agent.Report.LastError)) + "\n/port Change runtime port · /doctor Details"
 	}
 	if m.state.notice != "" {
-		out += "\n" + m.styles.waiting.Render(cleanText(m.state.notice))
+		out += "\n" + m.styles.waiting.Render(cleanText(firstLine(m.state.notice)))
 	}
 	if m.notice != "" {
-		out += "\n" + m.styles.waiting.Render(cleanText(m.notice))
+		out += "\n" + m.styles.waiting.Render(cleanText(firstLine(m.notice)))
 	}
-	footer := "Ctrl-C Exit · F1 Help · F3 Roles\nF4 Address · F5 Retry · F6 Port"
-	if m.state.network == app.Local {
-		footer = "Ctrl-C Exit · F1 Help · F3 Roles\nF2 Diagnose · F5 Retry · F6 Port"
-	} else if len(m.state.candidates) > 1 && !m.state.agent.Membership.Registered {
+	footer := "/ Commands · Ctrl-C Exit"
+	if m.state.phase == failed {
+		footer = "/retry · /doctor · /roles\n" + footer
+	}
+	if m.state.network != app.Local && len(m.state.candidates) > 1 && !m.state.agent.Membership.Registered {
 		out += "\nChoose a Controller (↑/↓, Enter):"
 		start := max(0, m.selection-1)
 		for i := start; i < min(len(m.state.candidates), start+2); i++ {
@@ -474,13 +436,34 @@ func (m *screen) agentView(budget int) string {
 			out += "\n\n" + m.styles.muted.Render("Start a Controller in another terminal or on another Mac.")
 		}
 	}
-	if m.height >= 28 && m.state.agent.WorkerID != "" {
-		out += "\n" + m.styles.muted.Render("Agent ID  "+cleanText(m.state.agent.WorkerID))
-	}
 	if lipgloss.Height(m.wrap(out))+lipgloss.Height(m.wrap(footer)) > budget {
 		footer = "PgUp/PgDn Details\n" + footer
 	}
 	return m.panel(out, footer, budget)
+}
+
+func (m *screen) agentDetails() string {
+	endpoint := m.state.agent.Endpoint
+	if endpoint == "" {
+		endpoint = m.listener()
+	}
+	model := m.state.cfg.Model
+	if model == config.Default().Model {
+		model = "Qwen2.5 0.5B"
+	}
+	controller := m.state.agent.Membership.ControllerAddress
+	if controller == "" {
+		controller = m.state.cfg.ControllerAddress
+	}
+	if controller == "" {
+		controller = "Not selected"
+	}
+	return "Name  " + agentName(m.state.agent.WorkerID) + "\nHost  " + cleanText(m.state.agent.Hostname) + "\nModel  " + cleanText(model) + "\nAgent listen  " + cleanText(endpoint) + fmt.Sprintf("\nRuntime address  127.0.0.1:%d", m.state.cfg.RuntimePort) + "\nController address  " + cleanText(controller) + "\nAgent ID  " + cleanText(m.state.agent.WorkerID)
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
 }
 
 func (m *screen) preparationView() string {

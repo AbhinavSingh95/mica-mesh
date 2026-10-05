@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -235,7 +236,7 @@ func TestGuidedRuntimePortFailureCanRecover(t *testing.T) {
 	env := terminalEnvironment("HOME="+t.TempDir(), "MICA_TEST_CONTROL="+f.server.URL)
 	agent := startTerminal(t, stockCLI(t), []string{"agent", "--local", "--config", f.config, "--worker-listen", "127.0.0.1:0", "--controller-address", f.address}, env)
 	agent.await("Runtime  Failed")
-	agent.await("F6 Change runtime port")
+	agent.await("/port Change runtime port")
 	// The listener belongs to this test and must remain usable throughout.
 	conn, err := net.DialTimeout("tcp4", occupied.Addr().String(), time.Second)
 	if err != nil {
@@ -254,6 +255,58 @@ func TestGuidedRuntimePortFailureCanRecover(t *testing.T) {
 	agent.finish(syscall.SIGTERM, "")
 	if err := unix.Kill(pid, 0); err == nil {
 		t.Fatal("recovered Agent did not reap runtime")
+	}
+	f.pid.Store(0)
+}
+
+func TestGuidedSlashNavigationPreservesRequestAndRoleLifetimes(t *testing.T) {
+	f := manualTerminalRuntime(t)
+	binary := stockCLI(t)
+	env := terminalEnvironment("HOME="+t.TempDir(), "MICA_TEST_CONTROL="+f.server.URL)
+	agent := startTerminal(t, binary, []string{"agent", "--local", "--config", f.config, "--worker-listen", "127.0.0.1:0", "--controller-address", f.address}, env)
+	agent.await("Runtime  Ready")
+	name := regexp.MustCompile(`[A-Z][a-z]+-[0-9a-f]{8}`).FindString(agent.view())
+	if name == "" {
+		t.Fatal("Agent has no readable name")
+	}
+	pid := int(f.pid.Load())
+	agent.send("/logs\r")
+	agent.await("LOGS")
+	agent.await("Agent listening")
+	agent.send("\x1b")
+	controller := startTerminal(t, binary, []string{"controller", "--local", "--config", f.config, "--controller-listen", f.address}, env)
+	controller.await("1 ready")
+	controller.send("/agents\r")
+	controller.await("AGENTS")
+	controller.await(name)
+	controller.await("Agent ID")
+	controller.send("\x1b")
+	controller.await("Enter a prompt")
+	controller.send("first request\r")
+	waitTerminalEvent(t, f.partial)
+	controller.await("partial 🌏")
+	controller.send("/logs\r")
+	controller.await("LOGS")
+	controller.send("\x03")
+	waitTerminalEvent(t, f.canceled)
+	f.processing.Store(false)
+	controller.send("\x1b")
+	controller.await("cleanup confirmed")
+	controller.send("second request\r")
+	controller.await("reused answer 🌏")
+	controller.await("Complete")
+	controller.send("/clear\r")
+	controller.await("INFERENCE TEST")
+	if strings.Contains(controller.view(), "reused answer") || f.streams.Load() != 2 || int(f.pid.Load()) != pid || f.launches.Load() != 1 {
+		t.Fatal("view commands changed inference or runtime ownership")
+	}
+	controller.finish(nil, "/quit\r")
+	if err := unix.Kill(pid, 0); err != nil {
+		t.Fatalf("Controller exit stopped the Agent runtime: %v", err)
+	}
+	agent.finish(nil, "/quit\r")
+	if err := unix.Kill(pid, 0); err == nil {
+		t.Fatal("Agent quit did not reap its runtime")
 	}
 	f.pid.Store(0)
 }

@@ -118,7 +118,7 @@ func TestDiagnosisAfterFailedStartupStillReportsPortConflict(t *testing.T) {
 	h.await(t, func(s sessionSnapshot) bool { return s.phase == failed })
 	h.act(action{kind: diagnose})
 	h.await(t, func(s sessionSnapshot) bool {
-		return strings.Contains(s.notice, "controller port · failed") && strings.Contains(s.notice, "--controller-listen")
+		return strings.Contains(s.diagnosis, "controller port · failed") && strings.Contains(s.diagnosis, "--controller-listen")
 	})
 }
 
@@ -134,9 +134,9 @@ func TestLocalDiagnosisAcceptsEphemeralListeners(t *testing.T) {
 		h := startSession(t, Options{Config: cfg, Role: role, Network: app.Local}, e)
 		h.await(t, func(s sessionSnapshot) bool { return s.phase == running })
 		h.act(action{kind: diagnose})
-		s := h.await(t, func(s sessionSnapshot) bool { return s.notice != "" })
-		if !strings.Contains(s.notice, "configuration · passed") {
-			t.Errorf("role %d rejected valid local configuration: %s", role, s.notice)
+		s := h.await(t, func(s sessionSnapshot) bool { return strings.Contains(s.diagnosis, "configuration ·") })
+		if !strings.Contains(s.diagnosis, "configuration · passed") {
+			t.Errorf("role %d rejected valid local configuration: %s", role, s.diagnosis)
 		}
 	}
 }
@@ -211,7 +211,7 @@ func TestNoControllerKeepsRuntimeReadyAndOffersAddressEntry(t *testing.T) {
 	m := newScreen(Options{})
 	m.state = s
 	text := m.View().Content
-	if !strings.Contains(text, "Runtime  Ready") || !strings.Contains(text, "Waiting for Controller") || !strings.Contains(text, "Controller address") {
+	if !strings.Contains(text, "Runtime  Ready") || !strings.Contains(text, "Waiting for Controller") || !strings.Contains(text, "/ Commands") {
 		t.Fatal(text)
 	}
 }

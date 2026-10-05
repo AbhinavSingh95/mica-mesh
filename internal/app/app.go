@@ -155,9 +155,11 @@ func startWithDiscovery(ctx context.Context, cfg config.Config, roles config.Rol
 	if roles&config.RoleWorker != 0 {
 		rc := runtime.Config{BinaryPath: cfg.RuntimeBinary, ModelPath: cfg.ModelPath, Backend: cfg.Backend, Port: cfg.RuntimePort, Model: cfg.ModelDescriptor}
 		id := uuid.NewString()
-		svc := worker.New(id, rc, hardware.Profile(ctx), rt)
+		profile := hardware.Profile(ctx)
+		svc := worker.New(id, rc, profile, rt)
 		p.worker = svc
 		p.workerID = id
+		p.hostname = profile.Hostname
 		p.endpoint = wl.Addr().String()
 		g := server()
 		meshv1.RegisterWorkerServiceServer(g, svc)

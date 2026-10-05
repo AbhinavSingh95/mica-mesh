@@ -3,12 +3,15 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "terminal",
     srcs = [
+        "commands.go",
         "console.go",
         "descriptor.go",
         "editor.go",
         "effects.go",
         "input.go",
         "model.go",
+        "names.go",
+        "panels.go",
         "sanitize.go",
         "session.go",
         "style.go",
@@ -43,6 +46,7 @@ go_library(
 go_test(
     name = "terminal_test",
     srcs = [
+        "commands_test.go",
         "console_darwin_test.go",
         "editor_test.go",
         "flow_test.go",
@@ -50,6 +54,7 @@ go_test(
         "library_test.go",
         "lifetime_test.go",
         "model_test.go",
+        "names_test.go",
         "presentation_test.go",
         "request_test.go",
         "session_io_darwin_test.go",

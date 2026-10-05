@@ -206,6 +206,13 @@ func TestAgentStatusCopiesReport(t *testing.T) {
 	if !ok || first.Report == nil || first.WorkerID == "" {
 		t.Fatalf("snapshot=%+v", first)
 	}
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "unknown"
+	}
+	if first.Hostname != hostname {
+		t.Fatalf("snapshot hostname=%q, want %q", first.Hostname, hostname)
+	}
 	first.Report.LastError = "mutated"
 	first.Membership.Registered = true
 	second, _ := p.AgentStatus()

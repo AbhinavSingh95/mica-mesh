@@ -180,7 +180,7 @@ func TestAgentCompactRetainsStateAndControls(t *testing.T) {
 	m.state.phase = running
 	m.state.agent.Report = &meshv1.WorkerReport{RuntimeState: meshv1.RuntimeState_RUNTIME_STATE_READY}
 	text := m.View().Content
-	for _, want := range []string{"Runtime  Ready", "Waiting for Controller", "Ctrl-C", "F4"} {
+	for _, want := range []string{"Runtime  Ready", "Waiting for Controller", "Ctrl-C", "/ Commands"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("compact Agent lost %q:\n%s", want, text)
 		}
