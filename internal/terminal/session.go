@@ -593,11 +593,15 @@ func (s *session) handle(ctx context.Context, a action) error {
 		if s.state.role == config.RoleWorker {
 			role = doctor.Agent
 		}
+		mode := doctor.Preflight
+		if s.process != nil && s.state.phase == running {
+			mode = doctor.Active
+		}
 		e := s.effects
 		go func() {
 			check, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			r, err := e.diagnose(check, o.Config, o.Layout, role, false)
+			r, err := e.diagnose(check, o.Config, o.Layout, role, doctor.Options{Mode: mode, Local: o.Network == app.Local})
 			var b strings.Builder
 			for _, c := range r.Checks {
 				fmt.Fprintf(&b, "%s · %s\n%s\n%s\n", c.Name, c.State, c.Detail, c.Action)

@@ -23,7 +23,11 @@ func runDoctor(ctx context.Context, c command, stderr io.Writer) error {
 			return err
 		}
 	}
-	report, runErr := doctor.Run(ctx, c.cfg, layout, c.doctorRole, c.probe)
+	mode := doctor.Preflight
+	if c.probe {
+		mode = doctor.Probe
+	}
+	report, runErr := doctor.Run(ctx, c.cfg, layout, c.doctorRole, doctor.Options{Mode: mode})
 	failed := false
 	for _, check := range report.Checks {
 		if _, err := fmt.Fprintf(stderr, "%s: %s\n", check.State, check.Name); err != nil {

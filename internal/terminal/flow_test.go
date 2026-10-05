@@ -3,6 +3,7 @@ package terminal
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -41,7 +42,7 @@ func testEffects() sessionEffects {
 			return []discovery.InterfaceAddress{{Name: "en0", IPv4: "192.168.1.2"}}, nil
 		},
 		candidates: func(context.Context) ([]discovery.Candidate, error) { return nil, nil },
-		diagnose: func(context.Context, config.Config, setup.Layout, doctor.Role, bool) (doctor.Report, error) {
+		diagnose: func(context.Context, config.Config, setup.Layout, doctor.Role, doctor.Options) (doctor.Report, error) {
 			return doctor.Report{}, nil
 		},
 	}
@@ -97,6 +98,47 @@ func TestControllerSkipsModelSetup(t *testing.T) {
 	}
 	h := startSession(t, Options{Config: config.Default(), Role: config.RoleController, Network: app.Local}, e)
 	h.await(t, func(s sessionSnapshot) bool { return s.phase == running })
+}
+
+func TestDiagnosisAfterFailedStartupStillReportsPortConflict(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	cfg := config.Default()
+	cfg.ControllerListen = listener.Addr().String()
+	cfg.WorkerListen = "127.0.0.1:0"
+	e := testEffects()
+	e.start = func(context.Context, config.Config, config.Role, app.Options) (*roleHandle, error) {
+		return nil, errors.New("role failed to start")
+	}
+	e.diagnose = doctor.Run
+	h := startSession(t, Options{Config: cfg, Role: config.RoleController, Network: app.Local}, e)
+	h.await(t, func(s sessionSnapshot) bool { return s.phase == failed })
+	h.act(action{kind: diagnose})
+	h.await(t, func(s sessionSnapshot) bool {
+		return strings.Contains(s.notice, "controller port · failed") && strings.Contains(s.notice, "--controller-listen")
+	})
+}
+
+func TestLocalDiagnosisAcceptsEphemeralListeners(t *testing.T) {
+	for _, role := range []config.Role{config.RoleController, config.RoleWorker} {
+		cfg := config.Default()
+		cfg.ControllerListen, cfg.WorkerListen = "127.0.0.1:0", "127.0.0.1:0"
+		if role == config.RoleWorker {
+			cfg.ControllerAddress = "127.0.0.1:50051"
+		}
+		e := testEffects()
+		e.diagnose = doctor.Run
+		h := startSession(t, Options{Config: cfg, Role: role, Network: app.Local}, e)
+		h.await(t, func(s sessionSnapshot) bool { return s.phase == running })
+		h.act(action{kind: diagnose})
+		s := h.await(t, func(s sessionSnapshot) bool { return s.notice != "" })
+		if !strings.Contains(s.notice, "configuration · passed") {
+			t.Errorf("role %d rejected valid local configuration: %s", role, s.notice)
+		}
+	}
 }
 func TestAgentConsentPrecedesEffects(t *testing.T) {
 	e := testEffects()

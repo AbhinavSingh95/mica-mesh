@@ -168,6 +168,53 @@ func TestGuidedSIGTERMDuringGenerationJoinsRequestOnly(t *testing.T) {
 	f.pid.Store(0)
 }
 
+func TestGuidedDiagnosisDoesNotFailOwnedPorts(t *testing.T) {
+	for _, ephemeral := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ephemeral=%v", ephemeral), func(t *testing.T) {
+			f := manualTerminalRuntime(t)
+			binary := stockCLI(t)
+			env := terminalEnvironment("HOME="+t.TempDir(), "MICA_TEST_CONTROL="+f.server.URL)
+			address := freeEndpoint(t)
+			if ephemeral {
+				address = "127.0.0.1:0"
+			}
+			agent := startTerminal(t, binary, []string{"agent", "--local", "--config", f.config, "--worker-listen", address, "--controller-address", f.address, "--controller-listen", "127.0.0.1:0"}, env)
+			agent.await("Runtime  Ready")
+			controller := startTerminal(t, binary, []string{"controller", "--local", "--config", f.config, "--controller-listen", f.address, "--worker-listen", "127.0.0.1:0"}, env)
+			controller.await("1 ready")
+			pid := int(f.pid.Load())
+			for _, role := range []*terminalChild{agent, controller} {
+				role.send("\x1bOQ") // F2
+				role.await("DIAGNOSIS")
+				role.await("configuration · passed")
+				if role == agent {
+					role.await("runtime probe · not checked")
+				} else {
+					role.await("controller connection · not checked")
+				}
+				text := role.view()
+				for _, port := range []string{"Agent port", "controller port", "runtime port"} {
+					if strings.Contains(text, port+" · failed") {
+						t.Errorf("diagnosis rejected an owned port:\n%s", text)
+					}
+				}
+				if strings.Contains(text, "Use doctor --probe") {
+					t.Error("diagnosis recommends another runtime probe while Agent is active")
+				}
+			}
+			if !strings.Contains(agent.view(), "Runtime  Ready") {
+				t.Error("diagnosis hides the running Agent's runtime health")
+			}
+			if f.launches.Load() != 1 || int(f.pid.Load()) != pid {
+				t.Fatal("diagnosis restarted the owned runtime")
+			}
+			controller.finish(nil, "\x03")
+			agent.finish(nil, "\x03")
+			f.pid.Store(0)
+		})
+	}
+}
+
 func TestGuidedRuntimePortFailureCanRecover(t *testing.T) {
 	f := manualTerminalRuntime(t)
 	data, err := os.ReadFile(f.config)

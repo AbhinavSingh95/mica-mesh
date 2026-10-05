@@ -47,7 +47,7 @@ func (m *screen) View() tea.View {
 		}
 		body = m.panel(text, "PgUp/PgDn Details · Esc Back · Ctrl-C Exit", budget)
 	case m.diagnosis:
-		body = m.panel(m.section("Diagnosis")+"\n"+cleanText(m.state.notice)+"\n"+suffix(m.diagnostics, 8192), "PgUp/PgDn Details · Esc Back · Ctrl-C Exit", budget)
+		body = m.panel(m.section("Diagnosis")+"\n"+m.diagnosisStatus()+"\n\n"+cleanText(m.state.notice)+"\n"+suffix(m.diagnostics, 8192), "PgUp/PgDn Details · Esc Back · Ctrl-C Exit", budget)
 	case m.editing:
 		label := "Controller address (HOST:PORT)"
 		if m.input == changePort {
@@ -352,7 +352,30 @@ func (m *screen) controllerView(budget int) (string, *tea.Cursor) {
 	}
 	return prefix + "\n" + input, cursor
 }
-func (m *screen) agentView(budget int) string {
+
+// Diagnosis uses the normal status feed; checking files must not freeze health
+// at the instant F2 was pressed or imply that an occupied port proves readiness.
+func (m *screen) diagnosisStatus() string {
+	if m.state.phase != running {
+		return "Role  " + m.statusLabel(m.phaseLabel())
+	}
+	if !capacityFresh(m.state.statusAt, m.state.now) || m.state.statusError {
+		return m.statusLabel("Unavailable") + " · Waiting for current role status."
+	}
+	if m.state.role == config.RoleController {
+		if m.state.status == nil {
+			return "Controller  " + m.statusLabel("Unavailable")
+		}
+		return "Controller  " + m.statusLabel("Ready")
+	}
+	out := m.agentStatusView()
+	if r := m.state.agent.Report; r != nil && r.LastError != "" {
+		out += "\n" + m.styles.failure.Render(cleanText(r.LastError))
+	}
+	return out
+}
+
+func (m *screen) agentStatusView() string {
 	runtimeState := "Starting"
 	if r := m.state.agent.Report; r != nil {
 		switch r.RuntimeState {
@@ -374,14 +397,6 @@ func (m *screen) agentView(budget int) string {
 	if m.state.phase != running {
 		runtimeState = m.phaseLabel()
 	}
-	endpoint := m.state.agent.Endpoint
-	if endpoint == "" {
-		endpoint = m.listener()
-	}
-	model := m.state.cfg.Model
-	if model == config.Default().Model {
-		model = "Qwen2.5 0.5B"
-	}
 	runtimeLine := "Runtime  " + runtimeState
 	style := m.styles.waiting
 	if runtimeState == "Ready" {
@@ -395,7 +410,19 @@ func (m *screen) agentView(budget int) string {
 	if m.state.phase == running && membership != "Connected" {
 		memberLine += " " + m.styles.waiting.Render(m.activity())
 	}
-	out := style.Bold(true).Render(runtimeLine) + "\n" + memberLine
+	return style.Bold(true).Render(runtimeLine) + "\n" + memberLine
+}
+
+func (m *screen) agentView(budget int) string {
+	endpoint := m.state.agent.Endpoint
+	if endpoint == "" {
+		endpoint = m.listener()
+	}
+	model := m.state.cfg.Model
+	if model == config.Default().Model {
+		model = "Qwen2.5 0.5B"
+	}
+	out := m.agentStatusView()
 	if m.roomy() {
 		out = m.card(out)
 	}

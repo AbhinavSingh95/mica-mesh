@@ -36,7 +36,7 @@ type sessionEffects struct {
 	connect    func(string) (*controllerConnection, error)
 	interfaces func() ([]discovery.InterfaceAddress, error)
 	candidates func(context.Context) ([]discovery.Candidate, error)
-	diagnose   func(context.Context, config.Config, setup.Layout, doctor.Role, bool) (doctor.Report, error)
+	diagnose   func(context.Context, config.Config, setup.Layout, doctor.Role, doctor.Options) (doctor.Report, error)
 	now        func() time.Time
 }
 

@@ -27,6 +27,21 @@ const (
 	Client     Role = "client"
 )
 
+// Mode selects which resource checks are safe for the caller's role lifetime.
+type Mode uint8
+
+const (
+	Preflight Mode = iota // Check whether a new role can acquire its ports.
+	Probe                 // Also start, warm and stop one temporary Agent runtime.
+	Active                // Caller owns the role; omit binds and runtime launches.
+)
+
+// Options preserves the caller's lifetime and configuration validation policy.
+type Options struct {
+	Mode  Mode
+	Local bool // Validate loopback-only settings, including ephemeral listeners.
+}
+
 // CheckState distinguishes failure from an omitted or unavailable observation.
 type CheckState string
 
@@ -48,16 +63,21 @@ type Report struct{ Checks []Check }
 
 // Run never repairs files or makes outbound connections. Probe explicitly owns
 // one runtime start/warm-up/stop. Failed checks belong in the report; errors mean
-// the requested checks could not run (invalid role or canceled invocation).
-func Run(ctx context.Context, cfg config.Config, layout setup.Layout, role Role, probe bool) (Report, error) {
-	return run(ctx, cfg, layout, role, probe, func() meshruntime.Runtime { return llamacpp.New() })
+// the requested checks could not run (invalid options or canceled invocation).
+// Active does not assess health: the caller must show its current role status.
+func Run(ctx context.Context, cfg config.Config, layout setup.Layout, role Role, options Options) (Report, error) {
+	return run(ctx, cfg, layout, role, options, func() meshruntime.Runtime { return llamacpp.New() })
 }
-func run(ctx context.Context, cfg config.Config, layout setup.Layout, role Role, probe bool, newRuntime func() meshruntime.Runtime) (Report, error) {
+func run(ctx context.Context, cfg config.Config, layout setup.Layout, role Role, options Options, newRuntime func() meshruntime.Runtime) (Report, error) {
 	var report Report
+	mode := options.Mode
 	if role != Agent && role != Controller && role != Client {
 		return report, errors.New("select doctor --role agent, controller, or client")
 	}
-	if probe && role != Agent {
+	if mode != Preflight && mode != Probe && mode != Active {
+		return report, errors.New("invalid diagnosis mode")
+	}
+	if mode == Probe && role != Agent {
 		return report, errors.New("use --probe only with --role agent")
 	}
 	if err := ctx.Err(); err != nil {
@@ -73,6 +93,13 @@ func run(ctx context.Context, cfg config.Config, layout setup.Layout, role Role,
 		report.Checks = append(report.Checks, check)
 		return err == nil
 	}
+	port := func(name, address, action string) bool {
+		if mode == Active {
+			report.Checks = append(report.Checks, Check{Name: name, State: NotChecked, Detail: "This session owns the role. See current status; no new port bind was attempted."})
+			return true
+		}
+		return record(name, "Available at check time.", action, checkPort(ctx, address))
+	}
 	var archErr error
 	if runtime.GOARCH != "arm64" && runtime.GOARCH != "amd64" {
 		archErr = errors.New("unsupported native architecture")
@@ -82,11 +109,15 @@ func run(ctx context.Context, cfg config.Config, layout setup.Layout, role Role,
 	if role == Controller {
 		roles = config.RoleController
 	}
-	if !record("configuration", "Configuration is valid.", "Correct the configuration or command options, then run doctor again.", config.Validate(cfg, roles)) {
+	validate := config.Validate
+	if options.Local {
+		validate = config.ValidateLocal
+	}
+	if !record("configuration", "Configuration is valid.", "Correct the configuration or command options, then run doctor again.", validate(cfg, roles)) {
 		return report, nil
 	}
 	if role == Controller {
-		record("controller port", "Available at check time.", "Stop the process you own on this port, or set --controller-listen HOST:PORT.", checkPort(ctx, cfg.ControllerListen))
+		port("controller port", cfg.ControllerListen, "Stop the process you own on this port, or set --controller-listen HOST:PORT.")
 	}
 	if role != Agent {
 		report.Checks = append(report.Checks, Check{Name: "Agent files and runtime", State: NotChecked, Detail: "This role needs no local runtime or model."}, Check{Name: "controller connection", State: NotChecked, Detail: "Doctor makes no outbound connection. Use mica-mesh status to check the controller."})
@@ -107,9 +138,11 @@ func run(ctx context.Context, cfg config.Config, layout setup.Layout, role Role,
 	if cfg.ModelPath != "" {
 		ready = record("model file", cfg.ModelPath, "Set --model-path to the prepared GGUF file, or run mica-mesh setup.", checkFile(cfg.ModelPath, false)) && ready
 	}
-	ready = record("Agent port", "Available at check time.", "Stop the process you own on this port, or set --worker-listen HOST:PORT.", checkPort(ctx, cfg.WorkerListen)) && ready
-	ready = record("runtime port", "Available at check time.", "Keep the current port owner running; set --runtime-port to a free port.", checkPort(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.RuntimePort)))) && ready
-	if probe && ready {
+	ready = port("Agent port", cfg.WorkerListen, "Stop the process you own on this port, or set --worker-listen HOST:PORT.") && ready
+	ready = port("runtime port", net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.RuntimePort)), "Keep the current port owner running; set --runtime-port to a free port.") && ready
+	if mode == Active {
+		report.Checks = append(report.Checks, Check{Name: "runtime probe", State: NotChecked, Detail: "The active Agent supplies runtime health. No extra runtime was started."})
+	} else if mode == Probe && ready {
 		rt := newRuntime()
 		startup, cancel := context.WithTimeout(ctx, 120*time.Second)
 		startErr := rt.Start(startup, meshruntime.Config{BinaryPath: cfg.RuntimeBinary, ModelPath: cfg.ModelPath, Backend: cfg.Backend, Port: cfg.RuntimePort, Model: cfg.ModelDescriptor})

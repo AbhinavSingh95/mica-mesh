@@ -141,6 +141,37 @@ func readyScreen() *screen {
 	return m
 }
 
+func TestDiagnosisKeepsCurrentHealthAndExpiresOldStatus(t *testing.T) {
+	for _, role := range []config.Role{config.RoleController, config.RoleWorker} {
+		m := readyScreen()
+		m.state.role = role
+		m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		m.state.agent.Report = &meshv1.WorkerReport{RuntimeState: meshv1.RuntimeState_RUNTIME_STATE_READY}
+		m.diagnosis = true
+		m.state.notice = "configuration · passed"
+		if text := ansi.Strip(m.View().Content); !strings.Contains(text, "Ready") || !strings.Contains(text, "configuration · passed") {
+			t.Fatalf("diagnosis lost health or checks: %s", text)
+		}
+		if role == config.RoleWorker {
+			m.state.agent.Report = &meshv1.WorkerReport{RuntimeState: meshv1.RuntimeState_RUNTIME_STATE_UNHEALTHY, LastError: "runtime health check failed"}
+			if text := ansi.Strip(m.View().Content); !strings.Contains(text, "Runtime  Failed") || !strings.Contains(text, "runtime health check failed") || strings.Contains(text, "Ready") {
+				t.Fatalf("diagnosis hid a runtime failure: %s", text)
+			}
+			m.state.agent.Report = &meshv1.WorkerReport{RuntimeState: meshv1.RuntimeState_RUNTIME_STATE_READY}
+		}
+		m.state.now = m.state.now.Add(3 * time.Second)
+		if text := ansi.Strip(m.View().Content); !strings.Contains(text, "Unavailable") || strings.Contains(text, "Ready") {
+			t.Fatalf("diagnosis kept stale readiness: %s", text)
+		}
+		m.state.statusAt = m.state.now
+		m.state.phase = failed
+		m.state.notice = "listen: address already in use; choose another port"
+		if text := ansi.Strip(m.View().Content); !strings.Contains(text, "Failed") || !strings.Contains(text, "address already in use") || strings.Contains(text, "Ready") {
+			t.Fatalf("diagnosis hid a startup failure: %s", text)
+		}
+	}
+}
+
 func TestRolePanelsFitSmallAndLargeTerminals(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {52, 18}, {60, 24}, {80, 24}, {110, 32}} {
 		for _, role := range []config.Role{config.RoleController, config.RoleWorker} {
