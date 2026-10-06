@@ -1,0 +1,326 @@
+{
+  "schema": 1,
+  "retrieved_date": "2026-10-05",
+  "scope": "P5 notice preparation only; no product integration or release coverage claim",
+  "candidates": [
+    {
+      "path": "tmux-colour-notice-549c35b06165f6ae023115eb76f83f2cbf945395.txt",
+      "bytes": 867,
+      "sha256": "63a651f0064438baca24ae46acbc8f3e5b6bd8f05a9873b1412ac91af9a45c6d"
+    },
+    {
+      "path": "unicode-data-source-notices.txt",
+      "bytes": 8034,
+      "sha256": "2cef16a30e1fa202b79d01aa9f67aef705b41cf3e355c0804c314ed14a2fef43"
+    },
+    {
+      "path": "unicode-license-v3-2026.txt",
+      "bytes": 1995,
+      "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96"
+    }
+  ],
+  "upstream_evidence": [
+    {
+      "path": "evidence/unicode-license-v3-retrieved-2026-10-05.txt",
+      "bytes": 1995,
+      "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+      "source_url": "https://www.unicode.org/license.txt",
+      "resolved_url": "https://www.unicode.org/license.txt",
+      "revision": "official mutable URL; byte snapshot retrieved 2026-10-05",
+      "source_bytes": 1995,
+      "source_sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/unicode-terms-retrieved-2026-10-05.html",
+      "bytes": 17115,
+      "sha256": "9f83fb0a046180c87d22c2678e79300475125611ac8dfc2da303db6c6b347251",
+      "source_url": "https://www.unicode.org/copyright.html",
+      "resolved_url": "https://www.unicode.org/copyright.html",
+      "revision": "official mutable URL; byte snapshot retrieved 2026-10-05",
+      "source_bytes": 17115,
+      "source_sha256": "9f83fb0a046180c87d22c2678e79300475125611ac8dfc2da303db6c6b347251",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/unicode-15.0.0-ReadMe.txt",
+      "bytes": 509,
+      "sha256": "05534943dfa62c595bbf3b01eccd6f740c00e58047a4e818a7c7f6c013a2b155",
+      "source_url": "https://www.unicode.org/Public/15.0.0/ucd/ReadMe.txt",
+      "resolved_url": "https://www.unicode.org/Public/15.0.0/ucd/ReadMe.txt",
+      "revision": "Unicode 15.0.0 published data path",
+      "source_bytes": 635,
+      "source_sha256": "53672c0d0b5185e3cf04c8e970d544c3af81ae7c8eeba0b9cf6d355aa954ae1f",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/unicode-15.0.0-auxiliary-GraphemeBreakProperty.txt",
+      "bytes": 363,
+      "sha256": "8e357b0a81256ef043c8805979bd5405af61db88d0b3dc415f3bda3d29b588c6",
+      "source_url": "https://www.unicode.org/Public/15.0.0/ucd/auxiliary/GraphemeBreakProperty.txt",
+      "resolved_url": "https://www.unicode.org/Public/15.0.0/ucd/auxiliary/GraphemeBreakProperty.txt",
+      "revision": "Unicode 15.0.0 published data path",
+      "source_bytes": 96863,
+      "source_sha256": "5a0f8748575432f8ff95e1dd5bfaa27bda1a844809e17d6939ee912bba6568a1",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/unicode-15.0.0-EastAsianWidth.txt",
+      "bytes": 1926,
+      "sha256": "66bf293b2ec1d1579c1ff4190c87b6ad3de515d629a09a16e5740a604e4b272a",
+      "source_url": "https://www.unicode.org/Public/15.0.0/ucd/EastAsianWidth.txt",
+      "resolved_url": "https://www.unicode.org/Public/15.0.0/ucd/EastAsianWidth.txt",
+      "revision": "Unicode 15.0.0 published data path",
+      "source_bytes": 186337,
+      "source_sha256": "743e7bc435c04ab1a8459710b1c3cad56eedced5b806b4659b6e69b85d0adf2a",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/unicode-15.0.0-emoji-emoji-data.txt",
+      "bytes": 701,
+      "sha256": "365e1a0bd29b8f444c631294ca3673413cfaf4d831a2e71a92345f13231e9e6c",
+      "source_url": "https://www.unicode.org/Public/15.0.0/ucd/emoji/emoji-data.txt",
+      "resolved_url": "https://www.unicode.org/Public/15.0.0/ucd/emoji/emoji-data.txt",
+      "revision": "Unicode 15.0.0 published data path",
+      "source_bytes": 111505,
+      "source_sha256": "29071dba22c72c27783a73016afb8ffaeb025866740791f9c2d0b55cc45a3470",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/unicode-17.0.0-ReadMe.txt",
+      "bytes": 618,
+      "sha256": "4b8ae3efecd247c6987ff0d64b73a02d2d3bf11e525c1c22bce28d99900f3bc3",
+      "source_url": "https://www.unicode.org/Public/17.0.0/ucd/ReadMe.txt",
+      "resolved_url": "https://www.unicode.org/Public/17.0.0/ucd/ReadMe.txt",
+      "revision": "Unicode 17.0.0 published data path",
+      "source_bytes": 740,
+      "source_sha256": "9fe1a90bd32659d7953616283dc2bffaa165518aae9ace026040c42c559ba606",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/unicode-17.0.0-auxiliary-GraphemeBreakProperty.txt",
+      "bytes": 375,
+      "sha256": "33c131058f821d0411968603145b46e2db7ed7e744a0f12b00e1c4d2b48a8052",
+      "source_url": "https://www.unicode.org/Public/17.0.0/ucd/auxiliary/GraphemeBreakProperty.txt",
+      "resolved_url": "https://www.unicode.org/Public/17.0.0/ucd/auxiliary/GraphemeBreakProperty.txt",
+      "revision": "Unicode 17.0.0 published data path",
+      "source_bytes": 99377,
+      "source_sha256": "d6b51d1d2ae5c33b451b7ed994b48f1f4dc62b2272a5831e7fd418514a6bae89",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/unicode-17.0.0-EastAsianWidth.txt",
+      "bytes": 1827,
+      "sha256": "611f872b54b3014ce0ddc3aef768a636ef0f82551dc1b33a07ddc543dd252f78",
+      "source_url": "https://www.unicode.org/Public/17.0.0/ucd/EastAsianWidth.txt",
+      "resolved_url": "https://www.unicode.org/Public/17.0.0/ucd/EastAsianWidth.txt",
+      "revision": "Unicode 17.0.0 published data path",
+      "source_bytes": 201595,
+      "source_sha256": "ea7ce50f3444a050333448dffef1cadd9325af55cbb764b4a2280faf52170a33",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/unicode-17.0.0-emoji-emoji-data.txt",
+      "bytes": 658,
+      "sha256": "67b36a7f3fcfc2ed3793738cb63e70ef4a748291d1213b0141f0246859e60f4d",
+      "source_url": "https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-data.txt",
+      "resolved_url": "https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-data.txt",
+      "revision": "Unicode 17.0.0 published data path",
+      "source_bytes": 107324,
+      "source_sha256": "2cb2bb9455cda83e8481541ecf5b6dfda66a3bb89efa3fa7c5297eccf607b72b",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/unicode-idna-15.0.0-header.txt",
+      "bytes": 403,
+      "sha256": "1d8f99dbee6960b13dc977e49e46707d66de904efc319a6c5a0a37c0a9c97081",
+      "source_url": "https://www.unicode.org/Public/idna/15.0.0/IdnaMappingTable.txt",
+      "resolved_url": "https://www.unicode.org/Public/idna/15.0.0/IdnaMappingTable.txt",
+      "revision": "Unicode IDNA 15.0.0 published data path",
+      "source_bytes": 874554,
+      "source_sha256": "cc8522199541d60326a42a8f91f8748fd15630a42502dd2cf4878e81e2066ead",
+      "transformation": "initial complete # comment header only"
+    },
+    {
+      "path": "evidence/ansi-color-00c6608f106b9c6cd8a1a77156f7901f41265e64.go",
+      "bytes": 24129,
+      "sha256": "133c221fd98b88312d41a07bcc4049572a7f79b41d641ca87e4730ede7d8d3d8",
+      "source_url": "https://raw.githubusercontent.com/charmbracelet/x/00c6608f106b9c6cd8a1a77156f7901f41265e64/ansi/color.go",
+      "resolved_url": "https://raw.githubusercontent.com/charmbracelet/x/00c6608f106b9c6cd8a1a77156f7901f41265e64/ansi/color.go",
+      "revision": "00c6608f106b9c6cd8a1a77156f7901f41265e64",
+      "source_bytes": 24129,
+      "source_sha256": "133c221fd98b88312d41a07bcc4049572a7f79b41d641ca87e4730ede7d8d3d8",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/ansi-color-port-introduction-3df8ea63ae8bc398b743aba66befa887518f39c0.json",
+      "bytes": 33438,
+      "sha256": "a518e11e5018444540ad26e8bcca9d8ce6790ccff167c2cadf844025e9538a99",
+      "source_url": "https://api.github.com/repos/charmbracelet/x/commits/3df8ea63ae8bc398b743aba66befa887518f39c0",
+      "resolved_url": "https://api.github.com/repos/charmbracelet/x/commits/3df8ea63ae8bc398b743aba66befa887518f39c0",
+      "revision": "3df8ea63ae8bc398b743aba66befa887518f39c0",
+      "source_bytes": 33438,
+      "source_sha256": "a518e11e5018444540ad26e8bcca9d8ce6790ccff167c2cadf844025e9538a99",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/ansi-color-history-at-00c6608f106b9c6cd8a1a77156f7901f41265e64.json",
+      "bytes": 41929,
+      "sha256": "7cf22737e05cd2c6a2c7e7060aa84f8f2a2a6ee13d235e7d8d0d33998e3eebf9",
+      "source_url": "https://api.github.com/repos/charmbracelet/x/commits?path=ansi/color.go&sha=00c6608f106b9c6cd8a1a77156f7901f41265e64&per_page=100",
+      "resolved_url": "https://api.github.com/repos/charmbracelet/x/commits?path=ansi/color.go&sha=00c6608f106b9c6cd8a1a77156f7901f41265e64&per_page=100",
+      "revision": "00c6608f106b9c6cd8a1a77156f7901f41265e64",
+      "source_bytes": 41929,
+      "source_sha256": "7cf22737e05cd2c6a2c7e7060aa84f8f2a2a6ee13d235e7d8d0d33998e3eebf9",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/tmux-colour-549c35b06165f6ae023115eb76f83f2cbf945395.c",
+      "bytes": 31737,
+      "sha256": "940a91cd4bc5b69333486cda82e5c1f61f9754d8d30369916bf7b685bb2befe9",
+      "source_url": "https://raw.githubusercontent.com/tmux/tmux/549c35b06165f6ae023115eb76f83f2cbf945395/colour.c",
+      "resolved_url": "https://raw.githubusercontent.com/tmux/tmux/549c35b06165f6ae023115eb76f83f2cbf945395/colour.c",
+      "revision": "549c35b06165f6ae023115eb76f83f2cbf945395",
+      "source_bytes": 31737,
+      "source_sha256": "940a91cd4bc5b69333486cda82e5c1f61f9754d8d30369916bf7b685bb2befe9",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/tmux-tag-3.5a.json",
+      "bytes": 655,
+      "sha256": "995098a737276a24760f68a1617a740cdd4a39c7df5ef996a53c304afef3c442",
+      "source_url": "https://api.github.com/repos/tmux/tmux/git/tags/201478321a4623df80bb864884e8a8f536d3d53f",
+      "resolved_url": "https://api.github.com/repos/tmux/tmux/git/tags/201478321a4623df80bb864884e8a8f536d3d53f",
+      "revision": "annotated tag object 201478321a4623df80bb864884e8a8f536d3d53f",
+      "source_bytes": 655,
+      "source_sha256": "995098a737276a24760f68a1617a740cdd4a39c7df5ef996a53c304afef3c442",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/displaywidth-generator-main-b6da6e784d7796398607efa9883b4d9f6e7be509.go",
+      "bytes": 700,
+      "sha256": "f55870909018e686dbe426f311bb51be6603412e666b688185e0e08b8fac0a77",
+      "source_url": "https://raw.githubusercontent.com/clipperhouse/displaywidth/b6da6e784d7796398607efa9883b4d9f6e7be509/internal/gen/main.go",
+      "resolved_url": "https://raw.githubusercontent.com/clipperhouse/displaywidth/b6da6e784d7796398607efa9883b4d9f6e7be509/internal/gen/main.go",
+      "revision": "b6da6e784d7796398607efa9883b4d9f6e7be509",
+      "source_bytes": 700,
+      "source_sha256": "f55870909018e686dbe426f311bb51be6603412e666b688185e0e08b8fac0a77",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/displaywidth-generator-unicode-b6da6e784d7796398607efa9883b4d9f6e7be509.go",
+      "bytes": 11083,
+      "sha256": "99aae93fc659cb2012eb89660d8933956e48af96762755e955ff4c4f9452cc52",
+      "source_url": "https://raw.githubusercontent.com/clipperhouse/displaywidth/b6da6e784d7796398607efa9883b4d9f6e7be509/internal/gen/unicode.go",
+      "resolved_url": "https://raw.githubusercontent.com/clipperhouse/displaywidth/b6da6e784d7796398607efa9883b4d9f6e7be509/internal/gen/unicode.go",
+      "revision": "b6da6e784d7796398607efa9883b4d9f6e7be509",
+      "source_bytes": 11083,
+      "source_sha256": "99aae93fc659cb2012eb89660d8933956e48af96762755e955ff4c4f9452cc52",
+      "transformation": "none"
+    },
+    {
+      "path": "evidence/uax29-generator-main-b03477d1fbba89df95a6b55da0a222b2e2228610.go",
+      "bytes": 10499,
+      "sha256": "41c16adf3f485e648df0c566ee3a3cbbb106bc6c11668cf3cbcaafa706c9e796",
+      "source_url": "https://raw.githubusercontent.com/clipperhouse/uax29/b03477d1fbba89df95a6b55da0a222b2e2228610/internal/gen/main.go",
+      "resolved_url": "https://raw.githubusercontent.com/clipperhouse/uax29/b03477d1fbba89df95a6b55da0a222b2e2228610/internal/gen/main.go",
+      "revision": "b03477d1fbba89df95a6b55da0a222b2e2228610",
+      "source_bytes": 10499,
+      "source_sha256": "41c16adf3f485e648df0c566ee3a3cbbb106bc6c11668cf3cbcaafa706c9e796",
+      "transformation": "none"
+    }
+  ],
+  "resolved_local_evidence": [
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+org_golang_x_text/unicode/bidi/tables15.0.0.go",
+      "bytes": 130478,
+      "sha256": "98c2d6d57e116667e73a4f5c89ee20ead7b27b50d561b5c5d23d8ebf0e3f3310",
+      "scope": "Unicode 15; !go1.27"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+org_golang_x_text/unicode/norm/tables15.0.0.go",
+      "bytes": 395028,
+      "sha256": "49dda94f9429bac8c29efe11e09558d46abfaa3c8e1de59816f2910b99cade04",
+      "scope": "Unicode 15; !go1.27"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+org_golang_x_net/idna/tables15.0.0.go",
+      "bytes": 304530,
+      "sha256": "79fb7af83a29255478a5e56fdc8d176276ccdb4d1ff1b1459646cbf8d52cc5f3",
+      "scope": "Unicode 15; !go1.27"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/rules_go++go_sdk+go_sdk/src/unicode/tables.go",
+      "bytes": 243953,
+      "sha256": "6a88d48746c4b2c471cc04ae40559694b734770212e6f5ea5f1962adb0c0bdb1",
+      "scope": "Go 1.26.8 Unicode 15"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_rivo_uniseg/graphemeproperties.go",
+      "bytes": 179629,
+      "sha256": "321483625d9a4aa92e4a5730df51c59d5b49725cd20e3879749488e5628b3da8",
+      "scope": "Unicode 15"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_rivo_uniseg/wordproperties.go",
+      "bytes": 187876,
+      "sha256": "10136e6c3c8ea619276428d59278e312aa4ce33b2e50d98f3a618f162b3a5864",
+      "scope": "Unicode 15"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_rivo_uniseg/sentenceproperties.go",
+      "bytes": 241800,
+      "sha256": "272502600803b8e99721cb9d76002a6546ea2350056bf66bb7860c39a2032bd9",
+      "scope": "Unicode 15"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_rivo_uniseg/lineproperties.go",
+      "bytes": 298992,
+      "sha256": "d73432ab989195312fdaa4f4dcea34c7bfb478160b98ad26fbc31df94f898b45",
+      "scope": "Unicode 15"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_rivo_uniseg/eastasianwidth.go",
+      "bytes": 215729,
+      "sha256": "1cd2368ddedc56182d2f64576f2a713a2ad6234265d940575285f61006527c5b",
+      "scope": "Unicode 15"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_rivo_uniseg/emojipresentation.go",
+      "bytes": 26466,
+      "sha256": "c4e1921aafedd787a29a0a6e329b85c6833eb1cfad0cfaf00450783f99e33b9c",
+      "scope": "Unicode 15"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_clipperhouse_uax29_v2/graphemes/trie.go",
+      "bytes": 104197,
+      "sha256": "3182d14c05afe4d1f11b51227abc9714d3bbe6e15758285cf42de7477c9309d4",
+      "scope": "Unicode 17"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_mattn_go_runewidth/script/generate.go",
+      "bytes": 3827,
+      "sha256": "2b125485ff86ed491820967a97461b5f04b967d546fb8e79d494d21336f79209",
+      "scope": "Unicode 17 source selection"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_mattn_go_runewidth/runewidth_table.go",
+      "bytes": 32949,
+      "sha256": "bf478f6cc0d23c55f36e22fd79f02ec766f258b9b85b63905b6d3379d6e8ef32",
+      "scope": "generated width table"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_clipperhouse_displaywidth/trie.go",
+      "bytes": 100958,
+      "sha256": "554562d3092a9e3f2b604b2dfd65f7d8c59eab15181eb0d008d41e483ecd856d",
+      "scope": "generated width table"
+    },
+    {
+      "source_path": "/private/var/tmp/_bazel___init__abs/155c808de54434722fa6b6a459934def/external/gazelle++go_deps+com_github_charmbracelet_x_ansi/color.go",
+      "bytes": 24129,
+      "sha256": "133c221fd98b88312d41a07bcc4049572a7f79b41d641ca87e4730ede7d8d3d8",
+      "scope": "exact source equality with pinned upstream verified"
+    }
+  ],
+  "uncertainty": "Exact copied tmux revision not identified. Pinned tmux 3.5a source notice is a conservative preservation input, not a claim of copied revision. Unicode live policy/license snapshots are date-and-hash pinned, not historical license assertions."
+}

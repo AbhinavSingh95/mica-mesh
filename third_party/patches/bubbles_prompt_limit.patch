@@ -1,0 +1,13 @@
+diff --git a/textarea/textarea.go b/textarea/textarea.go
+--- a/textarea/textarea.go
++++ b/textarea/textarea.go
+@@ -34,7 +34,8 @@
+ 	defaultMaxWidth  = 500
+ 
+ 	// XXX: in v2, make max lines dynamic and default max lines configurable.
+-	maxLines = 10000
++	// Permit every line of a 16 KiB Mica prompt, including only newlines.
++	maxLines = 16385
+ )
+ 
+ // Internal messages for clipboard operations.

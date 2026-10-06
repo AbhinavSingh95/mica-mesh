@@ -1,0 +1,53 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "worker",
+    srcs = [
+        "membership.go",
+        "service.go",
+        "supervisor.go",
+    ],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/worker",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/protocol",
+        "//internal/runtime",
+        "//protocol/mesh/v1:mesh",
+        "@com_github_google_uuid//:uuid",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//backoff",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "worker_test",
+    size = "small",
+    srcs = [
+        "membership_reconnect_test.go",
+        "membership_test.go",
+        "service_test.go",
+        "supervisor_test.go",
+        "transport_test.go",
+    ],
+    embed = [":worker"],
+    deps = [
+        "//internal/protocol",
+        "//internal/runtime",
+        "//internal/testutil/fakeruntime",
+        "//protocol/mesh/v1:mesh",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//status",
+    ],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

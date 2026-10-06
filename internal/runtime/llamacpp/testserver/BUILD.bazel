@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_binary(
+    name = "testserver",
+    testonly = True,
+    embed = [":testserver_lib"],
+    visibility = [
+        "//cmd/mica-mesh:__pkg__",
+        "//internal/app:__pkg__",
+        "//internal/runtime/llamacpp:__pkg__",
+    ],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = [
+        "BUILD.bazel",
+        "main.go",
+    ],
+    visibility = ["//:__pkg__"],
+)
+
+go_library(
+    name = "testserver_lib",
+    testonly = True,
+    srcs = ["main.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/runtime/llamacpp/testserver",
+    visibility = ["//visibility:private"],
+)

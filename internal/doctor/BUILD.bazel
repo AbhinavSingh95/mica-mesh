@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "doctor",
+    srcs = ["doctor.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/doctor",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/config",
+        "//internal/runtime",
+        "//internal/runtime/llamacpp",
+        "//internal/setup",
+        "@org_golang_x_sys//unix",
+    ],
+)
+
+go_test(
+    name = "doctor_test",
+    srcs = ["doctor_test.go"],
+    embed = [":doctor"],
+    deps = [
+        "//internal/config",
+        "//internal/runtime",
+        "//internal/setup",
+        "//internal/testutil/fakeruntime",
+    ],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

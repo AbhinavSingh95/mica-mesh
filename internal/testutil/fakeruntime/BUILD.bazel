@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fakeruntime",
+    testonly = True,
+    srcs = ["runtime.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/testutil/fakeruntime",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/runtime"],
+)
+
+go_test(
+    name = "fakeruntime_test",
+    srcs = ["runtime_test.go"],
+    embed = [":fakeruntime"],
+    deps = ["//internal/runtime"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

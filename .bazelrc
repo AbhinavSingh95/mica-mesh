@@ -1,0 +1,9 @@
+common --enable_bzlmod
+common --enable_workspace=false
+
+build --incompatible_strict_action_env
+build --incompatible_enable_proto_toolchain_resolution
+build --@protobuf//bazel/toolchains:prefer_prebuilt_protoc
+build:race --@rules_go//go/config:race
+
+test --test_output=errors

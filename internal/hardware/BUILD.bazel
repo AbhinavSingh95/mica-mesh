@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hardware",
+    srcs = ["profile.go"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/internal/hardware",
+    visibility = ["//:__subpackages__"],
+    deps = ["//protocol/mesh/v1:mesh"],
+)
+
+go_test(
+    name = "hardware_test",
+    srcs = ["profile_test.go"],
+    embed = [":hardware"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = glob(["*.go"]) + ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)

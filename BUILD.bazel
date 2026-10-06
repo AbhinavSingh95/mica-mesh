@@ -1,0 +1,62 @@
+load("@gazelle//:def.bzl", "gazelle")
+load("@rules_go//go:def.bzl", "nogo")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# gazelle:prefix github.com/AbhinavSingh95/mica-mesh
+# gazelle:exclude .superpowers
+# gazelle:exclude .local
+
+gazelle(name = "gazelle")
+
+nogo(
+    name = "nogo",
+    vet = True,
+    visibility = ["//visibility:public"],
+)
+
+# Each package exports its sources so the check also covers subpackages.
+filegroup(
+    name = "format_srcs",
+    srcs = [
+        "BUILD.bazel",
+        "MODULE.bazel",
+        "//cmd/mica-mesh:format_srcs",
+        "//internal/app:format_srcs",
+        "//internal/cli:format_srcs",
+        "//internal/client:format_srcs",
+        "//internal/config:format_srcs",
+        "//internal/controller:format_srcs",
+        "//internal/discovery:format_srcs",
+        "//internal/doctor:format_srcs",
+        "//internal/hardware:format_srcs",
+        "//internal/protocol:format_srcs",
+        "//internal/runtime:format_srcs",
+        "//internal/runtime/llamacpp:format_srcs",
+        "//internal/runtime/llamacpp/testserver:format_srcs",
+        "//internal/setup:format_srcs",
+        "//internal/terminal:format_srcs",
+        "//internal/testutil/fakeruntime:format_srcs",
+        "//internal/worker:format_srcs",
+        "//protocol/mesh/v1:format_srcs",
+        "//tests/integration:format_srcs",
+        "//third_party/licenses:format_srcs",
+        "//third_party/patches:format_srcs",
+        "//tools/release:format_srcs",
+    ],
+)
+
+sh_test(
+    name = "format_check",
+    size = "small",
+    srcs = ["tools/check_format.sh"],
+    args = [
+        "$(rootpath @go_sdk//:bin/gofmt)",
+        "$(rootpath @buildifier_prebuilt//:buildifier)",
+        "$(rootpaths :format_srcs)",
+    ],
+    data = [
+        ":format_srcs",
+        "@buildifier_prebuilt//:buildifier",
+        "@go_sdk//:bin/gofmt",
+    ],
+)

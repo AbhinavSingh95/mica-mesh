@@ -1,0 +1,7 @@
+/bazel-*
+*.gguf
+/models/
+/runtime/
+/.local/
+.DS_Store
+docs/*

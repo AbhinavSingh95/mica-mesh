@@ -1,0 +1,33 @@
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//proto:def.bzl", "go_proto_library")
+
+proto_library(
+    name = "mesh_proto",
+    srcs = ["mesh.proto"],
+    visibility = ["//visibility:public"],
+)
+
+go_proto_library(
+    name = "mesh_go_proto",
+    compilers = [
+        "@rules_go//proto:go_grpc_v2",
+        "@rules_go//proto:go_proto",
+    ],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1",
+    proto = ":mesh_proto",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "format_srcs",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//:__pkg__"],
+)
+
+go_library(
+    name = "mesh",
+    embed = [":mesh_go_proto"],
+    importpath = "github.com/AbhinavSingh95/mica-mesh/protocol/mesh/v1",
+    visibility = ["//visibility:public"],
+)
